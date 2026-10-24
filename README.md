@@ -51,6 +51,17 @@ Then tick *Use local proxy* in Live LLM settings. The proxy listens on localhost
 
 Keys stay in the browser (or go through your own local proxy) and are sent only to the chosen provider. They are saved only if you tick *Remember keys*.
 
+### Optional class room (professor dashboard, roll numbers)
+Run OpsLab as a class with one command on the professor's laptop (Node 18+, nothing to install):
+```
+node tools/opslab-server.mjs      # prints "Students open: http://<laptop-ip>:8787"
+```
+1. **Professor:** open the printed address → **Class room** → *Create room*. Optionally paste the class roll-number list so only listed students can join. Share the 6-character room code. Keep the professor key to reopen the dashboard on another device.
+2. **Students:** open the same address (same Wi-Fi or hotspot) → **Class room** → enter the room code and roll number. Every run is then submitted automatically.
+3. **Dashboard:** each student's best % of optimum per topic, a leaderboard (score out of 6), class averages (first run vs best run), the most common mistakes per topic, who hasn't joined, *Reset device*, *Close room*, and **CSV export** for grading. It refreshes every 10 s.
+
+Fair play: the server **re-computes every run** from the student's decisions with the same engine, so results can't be faked. Only runs on the standard scenario count for the leaderboard (changed-scenario runs show as practice). Each roll number is tied to one device until the professor resets it. Runs made while the server is unreachable are queued and can be sent later. Data is saved in `opslab-rooms.json`. The server also includes the LLM proxy, so NVIDIA works without running `llm-proxy.mjs` separately: set the proxy URL to the server address.
+
 ## Classroom use (75 min)
 1. Set the role and explain decisions (blue) vs scenario inputs.
 2. Work through 3–4 topics: predict the best decision → run the defaults → change one decision → run again → open Get AI advice.

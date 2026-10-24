@@ -53,6 +53,7 @@ a{color:var(--accent)}
 .brand h1{font-size:17px}
 .brand p{margin:0;font-size:12px;color:var(--muted)}
 .top .spacer{flex:1}
+.pill[hidden]{display:none!important}
 .pill{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;font-size:12px;background:var(--accent-soft);color:var(--accent);font-weight:600;white-space:nowrap}
 .btn{border:1px solid var(--line);background:var(--panel);color:var(--ink);padding:8px 14px;border-radius:9px;font-weight:600;font-size:13px;transition:background .15s,border-color .15s}
 .btn:hover{background:var(--panel-2);border-color:var(--faint)}
@@ -247,6 +248,7 @@ ul.clean li{margin:2px 0}
     <p>AI-Powered Operations Management Simulator</p>
   </div>
   <div class="spacer"></div>
+  <button class="pill" id="roomPill" hidden style="border:0;cursor:pointer" title="Open the class room page"></button>
   <span class="pill" id="modePill" title="Simulation results and the built-in agent are deterministic and rule-based. The optional chat agent uses a live LLM (Claude) only if you add your own API key.">Rule-based agent · optional live LLM chat</span>
   <button class="btn small" id="themeBtn" title="Toggle light/dark theme">◐ Theme</button>
   <button class="btn small" id="resetAllBtn" title="Clear all runs in all topics and restore defaults">Reset all</button>
@@ -1174,6 +1176,7 @@ function renderNav() {
   const nav = $('#nav');
   nav.innerHTML = '<div class="group">Simulations</div>' + TOPICS.map(t => `<button data-view="${t.id}" class="${state.view === t.id ? 'active' : ''}"><span class="num">${t.num}</span>${esc(t.name)}<span class="runs">${state.runs[t.id].length ? state.runs[t.id].length + ' run' + (state.runs[t.id].length > 1 ? 's' : '') : ''}</span></button>`).join('') +
     '<div class="group">Debrief</div>' +
+    `<button data-view="room" class="${state.view === 'room' ? 'active' : ''}"><span class="num">👥</span>Class room<span class="runs">${ROOM.student ? esc(ROOM.student.code) : ROOM.prof ? 'host' : ''}</span></button>` +
     `<button data-view="report" class="${state.view === 'report' ? 'active' : ''}"><span class="num">R</span>Session report</button>` +
     `<button data-view="guide" class="${state.view === 'guide' ? 'active' : ''}"><span class="num">i</span>Instructor guide</button>`;
   $$('button', nav).forEach(b => b.onclick = () => { state.view = b.dataset.view; render(); window.scrollTo({top: 0}); });
@@ -1274,8 +1277,8 @@ function historyTable(t) {
   const runs = state.runs[t.id];
   if (!runs.length) return '<div class="empty">Each run is logged here with what you changed and how the main KPI moved.</div>';
   const k = t.kpis.find(k => k.key === t.objective.key);
-  return `<div class="scroll-x"><table class="tbl"><thead><tr><th>#</th><th>Decisions</th><th>What changed</th><th class="n">${esc(k.label)}</th><th class="n">vs previous</th><th class="n">% of AI best</th></tr></thead><tbody>${
-    runs.slice().reverse().map(r => `<tr><td>${r.n}</td><td>${esc(t.describe(r.p))}</td><td>${r.changes.length ? r.changes.map(c => `<span class="chg" ${c.role === 'scenario' ? 'title="Scenario change"' : ''}>${c.role === 'scenario' ? '⚑ ' : ''}${esc(c.text)}</span>`).join('') : '<span class="muted">' + (r.n === 1 ? 'First run' : 'No changes') + '</span>'}</td><td class="n"><b>${fmtV(k.fmt, r.r[k.key])}</b></td><td class="n">${r.n === 1 ? '<span class="flat">—</span>' : deltaHTML(k, r.r[k.key], runs[r.n - 2].r[k.key])}</td><td class="n">${F.pct(r.analysis.eff)}</td></tr>`).join('')
+  return `<div class="scroll-x"><table class="tbl"><thead><tr><th>#</th><th>Decisions</th><th>What changed</th><th class="n">${esc(k.label)}</th><th class="n">vs previous</th><th class="n">% of AI best</th>${ROOM.student ? '<th class="n">Class</th>' : ''}</tr></thead><tbody>${
+    runs.slice().reverse().map(r => `<tr><td>${r.n}</td><td>${esc(t.describe(r.p))}</td><td>${r.changes.length ? r.changes.map(c => `<span class="chg" ${c.role === 'scenario' ? 'title="Scenario change"' : ''}>${c.role === 'scenario' ? '⚑ ' : ''}${esc(c.text)}</span>`).join('') : '<span class="muted">' + (r.n === 1 ? 'First run' : 'No changes') + '</span>'}</td><td class="n"><b>${fmtV(k.fmt, r.r[k.key])}</b></td><td class="n">${r.n === 1 ? '<span class="flat">—</span>' : deltaHTML(k, r.r[k.key], runs[r.n - 2].r[k.key])}</td><td class="n">${F.pct(r.analysis.eff)}</td>${ROOM.student ? `<td class="n" id="sync-${t.id}-${r.n}">${syncBadge(r)}</td>` : ''}</tr>`).join('')
   }</tbody></table></div><p class="small muted" style="margin:8px 0 0">⚑ = scenario change. Compare decisions under the same scenario for a fair test.</p>`;
 }
 
@@ -1359,6 +1362,7 @@ function runSimulation(t) {
   runs.push(run);
   const k = t.kpis.find(k => k.key === t.objective.key);
   logActivity(t, `Run #${run.n}: ${t.describe(snap)} → ${k.label} ${fmtV(k.fmt, r[k.key])}; tested ${analysis.evaluated} alternatives (${F.pct(analysis.eff)} of best)`);
+  if (ROOM.student) setTimeout(() => submitRun(t, run), 0);
   return run;
 }
 
@@ -1376,6 +1380,8 @@ function renderMain() {
   const main = $('#main');
   if (state.view === 'report') { main.innerHTML = reportHTML(); $('#printBtn').onclick = () => window.print(); return; }
   if (state.view === 'guide') { main.innerHTML = guideHTML(); return; }
+  if (state.view === 'room') { main.innerHTML = roomHTML(); bindRoom(); return; }
+  stopDashTimer();
   const t = TOPIC[state.view];
   main.innerHTML = renderTopic(t);
   bindInputs(t);
@@ -1458,6 +1464,13 @@ function guideHTML() {
   <h3>Optional: live AI agent chat</h3>
   <p>The <b>Ask the AI agent</b> box (right panel) lets students ask free-form questions such as “Should I add a machine at B?” or “What if demand rises 30%?”. Connect any LLM under <i>Live LLM settings</i>: Anthropic Claude, NVIDIA NIM, OpenAI, Groq, OpenRouter, Google Gemini, a local Ollama model, or any OpenAI-compatible endpoint. A live LLM agent then answers. For providers that block browser calls (e.g. NVIDIA), run <code>node tools/llm-proxy.mjs</code> and tick <i>Use local proxy</i>. Models without tool calling still work: OpsLab sends them pre-computed simulator data. It has four tools: read the current state, run the simulation as a sandbox, run the optimizer, and propose settings. It must quote only numbers those tools return. Suggestions appear as an <i>Apply suggested settings</i> button; nothing changes until the student applies and runs. Without a key, the rule-based agent answers, so the demo still works offline and at no cost.</p>
   <p class="small muted">Classroom tip: run the live agent from the instructor's machine with a spending-limited key. Don't save keys on shared computers.</p>
+  <h3>Optional: run it as a class room</h3>
+  <ol><li>On your laptop, run <code>node tools/opslab-server.mjs</code> (Node 18+). It prints a <b>Students open</b> address, e.g. <code>http://192.168.1.20:8787</code>.</li>
+    <li>Open that address yourself, go to <b>Class room</b>, and create a room. You can paste the class roll-number list so only listed students can join. Note the 6-character room code (and keep the professor key to reopen the dashboard later).</li>
+    <li>Students open the same address on their laptops or phones (same Wi-Fi or hotspot), go to <b>Class room</b>, and enter the code and their roll number.</li>
+    <li>Every run is submitted automatically. The server re-computes each run from the student's decisions, so results can't be faked. Runs with a changed scenario count as practice only.</li>
+    <li>The live dashboard shows each student's best % of optimum per topic, a leaderboard, the most common mistakes per topic, and who hasn't joined. Export it to CSV for grading.</li></ol>
+  <p class="small muted">One roll number works on one device. Use <i>Reset device</i> if a student switches laptop. If campus Wi-Fi blocks device-to-device traffic, use a phone hotspot.</p>
   <div class="callout"><b>Tips.</b> Change one decision at a time so cause and effect are clear. Scenario changes are marked ⚑ in the history. All results are reproducible: the same inputs always give the same numbers, which suits live demos. <b>Reset topic</b> restores defaults; <b>Reset all</b> clears the whole session.</div>
   </section>`;
 }
@@ -1479,7 +1492,7 @@ const PROVIDERS = {
   ollama: {label: 'Ollama (local, free, no key)', format: 'openai', base: 'http://localhost:11434/v1', models: ['llama3.1', 'qwen2.5', 'mistral-nemo'], noKey: true, browser: true},
   custom: {label: 'Other OpenAI-compatible API', format: 'openai', base: '', models: [], keyHint: 'API key (if required)', browser: true}
 };
-const LLM = {provider: 'anthropic', cfg: {}, remember: false, proxyUrl: 'http://localhost:8787', busy: false, chats: {}, drafts: {}, maxSteps: 8};
+const LLM = {provider: 'anthropic', cfg: {}, remember: false, proxyUrl: location.protocol.startsWith('http') ? location.origin : 'http://localhost:8787', busy: false, chats: {}, drafts: {}, maxSteps: 8};
 Object.keys(PROVIDERS).forEach(id => { LLM.cfg[id] = {key: '', model: PROVIDERS[id].models[0] || '', base: PROVIDERS[id].base, proxy: !PROVIDERS[id].browser}; });
 try {
   const saved = JSON.parse(localStorage.getItem('opslab-llm') || 'null');
@@ -1865,6 +1878,206 @@ function bindChat(t) {
   const fg = $('#llmForget'); if (fg) fg.onclick = () => { LLM.cfg[LLM.provider].key = ''; saveLLM(); logActivity(t, 'API key removed'); renderAI(t); };
 }
 
+/* ---------------- 8. Class room (optional; needs tools/opslab-server.mjs) ----------------
+   The professor creates a room; students join with the room code and their roll number.
+   Each run's inputs are sent to the server, which re-computes the result with the same engine. */
+const ROOM = {student: null, prof: null, dash: null, timer: null, msg: {}, health: null, form: {}};
+try { ROOM.student = JSON.parse(localStorage.getItem('opslab-room-student') || 'null'); ROOM.prof = JSON.parse(localStorage.getItem('opslab-room-prof') || 'null'); } catch (e) {}
+const defaultServer = () => (location.protocol.startsWith('http') ? location.origin : '');
+function saveRoom() { try { localStorage.setItem('opslab-room-student', JSON.stringify(ROOM.student)); localStorage.setItem('opslab-room-prof', JSON.stringify(ROOM.prof)); } catch (e) {} }
+async function roomApi(server, path, {method = 'GET', body, key} = {}) {
+  if (!server) throw new Error('Enter the class-room server address (shown in the professor’s server window).');
+  const url = server.trim().replace(/\/+$/, '') + path;
+  let res;
+  try { res = await fetch(url, {method, headers: {...(body ? {'content-type': 'application/json'} : {}), ...(key ? {'x-admin-key': key} : {})}, body: body ? JSON.stringify(body) : undefined}); }
+  catch (e) { throw new Error(`Cannot reach the class-room server at ${server}. Check the address, and that this device is on the same network as the professor’s laptop.`); }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) { const err = new Error(data.error || `Server error ${res.status}`); err.status = res.status; throw err; }
+  return data;
+}
+const normServer = v => { v = String(v || '').trim(); if (v && !/^https?:\/\//i.test(v)) v = 'http://' + v; return v.replace(/\/+$/, ''); };
+
+// ---- student: submit runs ----
+async function submitRun(t, run) {
+  const s = ROOM.student; if (!s) return;
+  run.sync = 'pending'; updateSyncCell(t, run);
+  try {
+    const out = await roomApi(s.server, `/api/rooms/${s.code}/runs`, {method: 'POST', body: {roll: s.roll, token: s.token, topic: t.id, p: run.p, n: run.n}});
+    run.sync = out.recorded && !out.recorded.fair ? 'custom' : 'ok';
+    s.standing = {rank: out.rank, of: out.of, score: out.score, perTopic: out.perTopic};
+    await flushPending();
+  } catch (e) {
+    run.sync = 'fail'; run.syncErr = e.message;
+    if (!e.status || e.status >= 500) { s.pending = s.pending || []; s.pending.push({topic: t.id, p: run.p, n: run.n}); }
+    if (e.status === 401) s.needsRejoin = true;
+  }
+  saveRoom(); updateSyncCell(t, run); renderRoomPill();
+  if (state.view === 'room') renderMain();
+}
+async function flushPending() {
+  const s = ROOM.student; if (!s || !s.pending || !s.pending.length) return 0;
+  let sent = 0;
+  while (s.pending.length) {
+    const it = s.pending[0];
+    try { const out = await roomApi(s.server, `/api/rooms/${s.code}/runs`, {method: 'POST', body: {roll: s.roll, token: s.token, ...it}}); s.standing = {rank: out.rank, of: out.of, score: out.score, perTopic: out.perTopic}; s.pending.shift(); sent++; }
+    catch (e) { if (e.status && e.status < 500) s.pending.shift(); else break; }
+  }
+  saveRoom(); return sent;
+}
+function syncBadge(run) {
+  if (!run.sync) return '<span class="flat" title="Not sent: you were not in a class room for this run">–</span>';
+  if (run.sync === 'ok') return '<span class="up" title="Recorded in the class room">✓ sent</span>';
+  if (run.sync === 'custom') return '<span class="flat" title="Recorded, but the scenario was changed, so it does not count for the class leaderboard">✓ practice</span>';
+  if (run.sync === 'pending') return '<span class="flat">sending…</span>';
+  return `<span class="down" title="${esc(run.syncErr || '')}">✗ not sent</span>`;
+}
+function updateSyncCell(t, run) { const el = document.getElementById(`sync-${t.id}-${run.n}`); if (el) el.innerHTML = syncBadge(run); }
+function renderRoomPill() {
+  const el = $('#roomPill'); if (!el) return;
+  const s = ROOM.student;
+  if (!s) { el.hidden = true; return; }
+  el.hidden = false;
+  el.textContent = `Class ${s.code} · ${s.roll}${s.standing ? ` · rank ${s.standing.rank}/${s.standing.of}` : ''}${s.pending && s.pending.length ? ` · ${s.pending.length} unsent` : ''}`;
+}
+
+// ---- professor: dashboard ----
+async function loadDashboard() {
+  const pr = ROOM.prof; if (!pr || ROOM.loading) return;
+  ROOM.loading = true;
+  try { ROOM.dash = await roomApi(pr.server, `/api/rooms/${pr.code}/dashboard`, {key: pr.key}); ROOM.msg.dash = null; }
+  catch (e) { ROOM.msg.dash = {err: true, text: e.message}; }
+  finally { ROOM.loading = false; }
+  const body = $('#dashBody'); if (body) body.innerHTML = dashHTML();
+  bindDash();
+}
+function startDashTimer() { stopDashTimer(); ROOM.timer = setInterval(() => { if (state.view === 'room' && ROOM.prof && !document.hidden) loadDashboard(); }, 10000); }
+function stopDashTimer() { if (ROOM.timer) clearInterval(ROOM.timer); ROOM.timer = null; }
+const ago = ms => { const s = Math.max(0, Math.round((Date.now() - ms) / 1000)); return s < 60 ? `${s}s ago` : s < 3600 ? `${Math.round(s / 60)} min ago` : `${Math.round(s / 3600)} h ago`; };
+const effCell = v => v === null || v === undefined ? '<span class="flat">–</span>' : `<span class="${v >= 0.999 ? 'up' : v < 0.6 ? 'down' : ''}">${(v * 100).toFixed(0)}%</span>`;
+function dashHTML() {
+  const d = ROOM.dash, pr = ROOM.prof;
+  if (ROOM.msg.dash) return `<div class="msg error">${esc(ROOM.msg.dash.text)}</div>`;
+  if (!d) return '<div class="empty">Loading dashboard…</div>';
+  const n = d.students.length, runs = d.students.reduce((a, s) => a + s.runs, 0), avg = n ? d.students.reduce((a, s) => a + s.score, 0) / n / 6 : 0;
+  const kp = (l, v) => `<div class="kpi"><div class="l">${l}</div><div class="v">${v}</div></div>`;
+  return `<div class="kpis">${kp('Students joined', `${n}${d.room.roster ? ` / ${d.room.roster}` : ''}`)}${kp('Runs submitted', F.int(runs))}${kp('Class average', F.pct(avg))}${kp('Room', d.room.closed ? 'Closed' : 'Open')}</div>
+    <h3 style="margin-top:16px">By topic</h3><div class="scroll-x"><table class="tbl"><thead><tr><th>Topic</th><th class="n">Attempted</th><th class="n">Avg first run</th><th class="n">Avg best run</th><th>Most common mistakes (students)</th></tr></thead><tbody>
+    ${d.topicStats.map(ts => `<tr><td><b>${esc(ts.name)}</b></td><td class="n">${ts.attempted}</td><td class="n">${effCell(ts.avgFirst)}</td><td class="n">${effCell(ts.avgBest)}</td><td>${ts.topIssues.length ? ts.topIssues.map(i => `<span class="chg">${esc(i.title)} · ${i.students}</span>`).join('') : '<span class="muted">–</span>'}</td></tr>`).join('')}
+    </tbody></table></div>
+    <h3 style="margin-top:16px">Leaderboard <span class="sub">score = sum of best % of optimum per topic (standard scenario only), out of 6</span></h3>
+    ${n ? `<div class="scroll-x"><table class="tbl"><thead><tr><th>#</th><th>Roll</th><th>Name</th><th class="n">Score</th>${d.topics.map(t => `<th class="n">${esc(t.short)}</th>`).join('')}<th class="n">Runs</th><th>Last active</th><th></th></tr></thead><tbody>
+      ${d.students.map(s => `<tr><td>${s.rank}</td><td class="mono">${esc(s.roll)}</td><td>${esc(s.name || '')}</td><td class="n"><b>${s.score.toFixed(2)}</b></td>${d.topics.map(t => `<td class="n" title="${s.perTopic[t.id].runs} run(s)${s.perTopic[t.id].bestValue ? ' · best ' + esc(s.perTopic[t.id].bestValue) : ''}">${effCell(s.perTopic[t.id].best)}</td>`).join('')}<td class="n">${s.runs}</td><td class="small muted">${ago(s.lastSeen)}</td><td><button class="btn ghost small" data-reset="${esc(s.roll)}" title="Let this roll number join again from a new device">Reset device</button></td></tr>`).join('')}
+    </tbody></table></div>` : '<div class="empty">No students yet. Share the room code and address above.</div>'}
+    ${d.room.missing && d.room.missing.length ? `<p class="small"><b>Not joined yet (${d.room.missing.length}):</b> <span class="mono">${d.room.missing.map(esc).join(', ')}</span></p>` : ''}
+    <div class="actions"><button class="btn" id="dashRefresh">↻ Refresh</button><a class="btn" id="dashCsv" href="${esc(pr.server)}/api/rooms/${esc(pr.code)}/export.csv?key=${esc(pr.key)}" download>⬇ Export CSV</a><button class="btn" id="dashClose">${d.room.closed ? 'Reopen room' : 'Close room'}</button><span class="small muted" style="margin-left:auto">Auto-refreshes every 10 s · updated ${new Date(d.generated).toLocaleTimeString()}</span></div>`;
+}
+function bindDash() {
+  const pr = ROOM.prof; if (!pr) return;
+  const r = $('#dashRefresh'); if (r) r.onclick = () => loadDashboard();
+  const c = $('#dashClose'); if (c) c.onclick = async () => { try { await roomApi(pr.server, `/api/rooms/${pr.code}/close`, {method: 'POST', key: pr.key, body: {closed: !ROOM.dash.room.closed}}); } catch (e) { ROOM.msg.dash = {err: true, text: e.message}; } loadDashboard(); };
+  $$('[data-reset]').forEach(b => b.onclick = async () => {
+    if (!confirm(`Allow ${b.dataset.reset} to join again from a new device? Their results are kept.`)) return;
+    try { await roomApi(pr.server, `/api/rooms/${pr.code}/reset-student`, {method: 'POST', key: pr.key, body: {roll: b.dataset.reset}}); } catch (e) { ROOM.msg.dash = {err: true, text: e.message}; }
+    loadDashboard();
+  });
+}
+
+// ---- page ----
+function roomHTML() {
+  const s = ROOM.student, pr = ROOM.prof, srv = defaultServer();
+  const msg = k => ROOM.msg[k] ? `<div class="msg ${ROOM.msg[k].err ? 'error' : 'tool'}" style="margin-top:8px">${esc(ROOM.msg[k].text)}</div>` : '';
+  const field = (id, label, val, ph, extra = '') => `<div class="field"><label for="${id}"><span>${label}</span></label><input type="text" id="${id}" value="${esc(ROOM.form[id] !== undefined ? ROOM.form[id] : (val || ''))}" placeholder="${esc(ph)}" ${extra} style="width:100%;border:1px solid var(--line);background:var(--panel-2);color:var(--ink);border-radius:7px;padding:6px 8px;font:inherit"></div>`;
+  let student;
+  if (s) {
+    const st = s.standing;
+    student = `<p style="margin:0">Joined <b>${esc(s.roomName || s.code)}</b> (code <span class="mono">${esc(s.code)}</span>) as <b class="mono">${esc(s.roll)}</b>${s.name ? ` · ${esc(s.name)}` : ''}.</p>
+      <p class="small muted">Every run you make is sent automatically. The server re-computes it, so only real results count. Runs with a changed scenario are recorded as practice and don't count for the leaderboard.</p>
+      ${st ? `<div class="kpis"><div class="kpi primary"><div class="l">Your rank</div><div class="v">${st.rank} / ${st.of}</div></div><div class="kpi"><div class="l">Score (out of 6)</div><div class="v">${st.score.toFixed(2)}</div></div></div>
+        <div class="scroll-x" style="margin-top:8px"><table class="tbl"><thead><tr><th>Topic</th><th class="n">Runs</th><th class="n">Your best</th></tr></thead><tbody>${TOPICS.map(t => `<tr><td>${esc(t.name)}</td><td class="n">${st.perTopic[t.id].runs}</td><td class="n">${effCell(st.perTopic[t.id].best)}</td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">Run any simulation: your results appear here.</div>'}
+      ${s.needsRejoin ? '<div class="msg error" style="margin-top:8px">The server no longer recognises this device. Leave the room and join again (ask your professor to reset your roll number if needed).</div>' : ''}
+      <div class="actions">${s.pending && s.pending.length ? `<button class="btn primary" id="roomSync">Send ${s.pending.length} unsent run(s)</button>` : ''}<button class="btn" id="roomStanding">↻ Refresh my standing</button><button class="btn ghost" id="roomLeave">Leave room</button></div>${msg('student')}`;
+  } else {
+    student = `<p class="small muted" style="margin-top:0">Your professor gives you a room code. Enter it with your roll number, then use the simulator as usual: every run is submitted automatically.</p>
+      ${srv ? '' : field('jServer', 'Class-room server address', '', 'e.g. http://192.168.1.20:8787')}
+      ${field('jCode', 'Room code', '', 'e.g. K7Q2MX', 'maxlength="6" autocapitalize="characters"')}
+      ${field('jRoll', 'Roll number', '', 'e.g. PGP-25-101', 'autocapitalize="characters"')}
+      ${field('jName', 'Name (optional)', '', 'Your name')}
+      <div class="actions"><button class="btn primary" id="roomJoin">Join class room</button></div>${msg('student')}`;
+  }
+  let prof;
+  if (pr) {
+    prof = `<p style="margin:0">Room <b>${esc(pr.name)}</b></p>
+      <div style="font-size:34px;font-weight:800;letter-spacing:.12em;margin:6px 0" class="mono">${esc(pr.code)}</div>
+      <p class="small" style="margin:0">Students open <span id="studentUrl">${ROOM.health && ROOM.health.studentUrls && ROOM.health.studentUrls.length ? ROOM.health.studentUrls.map(u => `<b class="mono">${esc(u)}</b>`).join(' or ') : `the “Students open” address in your server window`}</span>, go to <b>Class room</b>, and enter this code with their roll number.</p>
+      <details class="llm-set"><summary>Professor key (needed to reopen this dashboard on another device)</summary><p class="mono small" style="margin:6px 0">${esc(pr.key)}</p></details>
+      <div class="actions"><button class="btn ghost small" id="profForget">Disconnect from this room</button></div>${msg('prof')}`;
+  } else {
+    prof = `<p class="small muted" style="margin-top:0">Start the server on your laptop with <span class="mono">node tools/opslab-server.mjs</span> and open the address it prints. Then create a room for your section.</p>
+      ${srv ? '' : field('pServer', 'Class-room server address', 'http://localhost:8787', 'http://localhost:8787')}
+      ${field('pName', 'Room name', '', 'e.g. OM Section A, Session 5')}
+      <div class="field"><label for="pRoster"><span>Class list (optional)</span><span class="u">roll numbers, one per line or comma-separated</span></label><textarea id="pRoster" rows="3" style="width:100%;border:1px solid var(--line);background:var(--panel-2);color:var(--ink);border-radius:7px;padding:6px 8px;font:inherit" placeholder="Leave empty to let any roll number join">${esc(ROOM.form.pRoster || '')}</textarea></div>
+      <div class="actions"><button class="btn primary" id="profCreate">Create room</button></div>
+      <details class="llm-set" style="margin-top:10px"><summary>Reopen an existing room</summary>
+        ${field('oCode', 'Room code', '', 'K7Q2MX')}${field('oKey', 'Professor key', '', 'key shown when the room was created')}
+        <div class="actions"><button class="btn" id="profOpen">Open dashboard</button></div></details>${msg('prof')}`;
+  }
+  return `<section class="card doc"><h2>Class room</h2><p class="muted" style="margin:0">Run OpsLab as a class: the professor creates a room, students join with a room code and roll number, and every run feeds a live dashboard with a leaderboard and the class's most common mistakes. It needs the optional server (<span class="mono">tools/opslab-server.mjs</span>) running on the professor's laptop, with students on the same network.</p></section>
+    <div class="two"><section class="card"><h3>Student</h3>${student}</section><section class="card">${s && !pr ? `<details class="llm-set"><summary>Professor tools</summary>${prof}</details>` : `<h3>Professor</h3>${prof}`}</section></div>
+    ${pr ? `<section class="card"><h3>Live dashboard · ${esc(pr.name)}</h3><div id="dashBody">${dashHTML()}</div></section>` : ''}`;
+}
+function bindRoom() {
+  const val = id => { const el = $('#' + id); return el ? el.value.trim() : ''; };
+  $$('#main input[type=text], #main textarea').forEach(el => el.addEventListener('input', () => { ROOM.form[el.id] = el.value; }));
+  const rerender = () => { if (state.view === 'room') renderMain(); renderRoomPill(); };
+  const j = $('#roomJoin');
+  if (j) j.onclick = async () => {
+    const server = normServer(val('jServer') || defaultServer()), code = val('jCode').toUpperCase(), roll = val('jRoll'), name = val('jName');
+    if (!code || !roll) { ROOM.msg.student = {err: true, text: 'Enter the room code and your roll number.'}; return rerender(); }
+    j.disabled = true;
+    try {
+      const out = await roomApi(server, `/api/rooms/${code}/join`, {method: 'POST', body: {roll, name}});
+      ROOM.student = {server, code, roll: out.roll, name, token: out.token, roomName: out.room, pending: []};
+      ROOM.msg.student = {text: `Joined ${out.room}. Your runs are now submitted automatically.`};
+      const me = await roomApi(server, `/api/rooms/${code}/me?roll=${encodeURIComponent(out.roll)}&token=${out.token}`).catch(() => null);
+      if (me) ROOM.student.standing = {rank: me.rank, of: me.of, score: me.score, perTopic: me.perTopic};
+      saveRoom(); logActivity(null, `Joined class room ${code} as ${out.roll}`);
+    } catch (e) { ROOM.msg.student = {err: true, text: e.message}; }
+    rerender();
+  };
+  const lv = $('#roomLeave'); if (lv) lv.onclick = () => { if (!confirm('Leave this class room on this device? Your submitted results stay with the professor.')) return; ROOM.student = null; ROOM.msg.student = null; saveRoom(); rerender(); };
+  const sy = $('#roomSync'); if (sy) sy.onclick = async () => { const n = await flushPending(); ROOM.msg.student = {text: `Sent ${n} run(s).`, err: !n}; rerender(); };
+  const sd = $('#roomStanding'); if (sd) sd.onclick = async () => {
+    const s = ROOM.student;
+    try { const me = await roomApi(s.server, `/api/rooms/${s.code}/me?roll=${encodeURIComponent(s.roll)}&token=${s.token}`); s.standing = {rank: me.rank, of: me.of, score: me.score, perTopic: me.perTopic}; s.needsRejoin = false; ROOM.msg.student = null; saveRoom(); }
+    catch (e) { ROOM.msg.student = {err: true, text: e.message}; if (e.status === 401) s.needsRejoin = true; }
+    rerender();
+  };
+  const pc = $('#profCreate');
+  if (pc) pc.onclick = async () => {
+    const server = normServer(val('pServer') || defaultServer());
+    pc.disabled = true;
+    try {
+      const out = await roomApi(server, '/api/rooms', {method: 'POST', body: {name: val('pName'), roster: $('#pRoster').value}});
+      ROOM.prof = {server, code: out.code, key: out.adminKey, name: out.name}; ROOM.msg.prof = null; ROOM.dash = null; saveRoom();
+      ROOM.health = await roomApi(server, '/api/health').catch(() => null);
+      logActivity(null, `Created class room ${out.code}`);
+    } catch (e) { ROOM.msg.prof = {err: true, text: e.message}; }
+    rerender(); if (ROOM.prof) { loadDashboard(); startDashTimer(); }
+  };
+  const po = $('#profOpen');
+  if (po) po.onclick = async () => {
+    const server = normServer(val('pServer') || defaultServer()), code = val('oCode').toUpperCase(), key = val('oKey');
+    try {
+      const d = await roomApi(server, `/api/rooms/${code}/dashboard`, {key});
+      ROOM.prof = {server, code, key, name: d.room.name}; ROOM.dash = d; ROOM.msg.prof = null; saveRoom();
+      ROOM.health = await roomApi(server, '/api/health').catch(() => null);
+    } catch (e) { ROOM.msg.prof = {err: true, text: e.message}; }
+    rerender(); if (ROOM.prof) startDashTimer();
+  };
+  const pf = $('#profForget'); if (pf) pf.onclick = () => { if (!confirm('Disconnect this device from the room? Write down the room code and professor key first if you want to reopen it.')) return; ROOM.prof = null; ROOM.dash = null; stopDashTimer(); saveRoom(); rerender(); };
+  if (ROOM.prof) { bindDash(); if (!ROOM.dash) loadDashboard(); if (!ROOM.health) roomApi(ROOM.prof.server, '/api/health').then(h => { ROOM.health = h; const el = $('#studentUrl'); if (el && h.studentUrls && h.studentUrls.length) el.innerHTML = h.studentUrls.map(u => `<b class="mono">${esc(u)}</b>`).join(' or '); }).catch(() => {}); startDashTimer(); }
+}
+
 /* ---------------- boot ---------------- */
 $('#resetAllBtn').onclick = () => { resetState(); state.errors = {}; logActivity(null, 'Session reset'); render(); };
 $('#themeBtn').onclick = () => {
@@ -1886,9 +2099,11 @@ try { const th = localStorage.getItem('opslab-theme'); if (th) document.document
     tip.style.top = Math.max(8, e.clientY - h - 10) + 'px';
   });
 })();
+$('#roomPill').onclick = () => { state.view = 'room'; render(); };
+renderRoomPill();
 render();
 // Exposed for automated testing
-window.OpsLab = {TOPICS, TOPIC, Agent, state, defaults, render, LLM, runTool, PROVIDERS};
+window.OpsLab = {TOPICS, TOPIC, Agent, state, defaults, render, LLM, runTool, PROVIDERS, ROOM};
 </script>
 </body>
 </html>

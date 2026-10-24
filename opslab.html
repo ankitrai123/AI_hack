@@ -184,6 +184,30 @@ ul.clean li{margin:2px 0}
 .log div{padding:1px 0}
 .chg{display:inline-block;background:var(--panel-2);border:1px solid var(--line);border-radius:6px;padding:0 6px;margin:2px 4px 2px 0;font-size:11.5px}
 
+/* ---------- live LLM chat ---------- */
+.chat-log{display:flex;flex-direction:column;gap:8px;max-height:420px;overflow-y:auto;margin:8px 0;padding-right:2px}
+.msg{font-size:12.8px;padding:8px 10px;border-radius:10px;max-width:92%;line-height:1.45;word-wrap:break-word}
+.msg.user{align-self:flex-end;background:var(--accent);color:var(--accent-ink)}
+.msg.assistant{align-self:flex-start;background:var(--panel-2);border:1px solid var(--line)}
+.msg.assistant ul{margin:4px 0;padding-left:18px}
+.msg.assistant p{margin:0 0 6px}.msg.assistant p:last-child{margin:0}
+.msg.tool{align-self:flex-start;font-size:11.5px;color:var(--muted);padding:2px 4px}
+.msg.error{align-self:stretch;background:var(--bad-soft);color:var(--bad)}
+.msg .who{display:block;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--faint);margin-bottom:2px}
+.chat-in{display:flex;gap:6px}
+.chat-in textarea{flex:1;resize:vertical;min-height:38px;max-height:140px;border:1px solid var(--line);background:var(--panel-2);color:var(--ink);border-radius:9px;padding:7px 9px;font:inherit;font-size:13px}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.chip{border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:99px;padding:3px 10px;font-size:11.5px;cursor:pointer}
+.chip:hover{border-color:var(--accent);color:var(--accent)}
+.llm-set{margin-top:8px;font-size:12px}
+.llm-set summary{cursor:pointer;color:var(--accent);font-weight:600}
+.llm-set .row2{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:6px}
+.llm-set input[type=password],.llm-set select{border:1px solid var(--line);background:var(--panel-2);color:var(--ink);border-radius:7px;padding:5px 7px;font:inherit;font-size:12.5px;flex:1;min-width:150px}
+.live{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:700;padding:2px 8px;border-radius:99px}
+.live.on{background:var(--good-soft);color:var(--good)}.live.off{background:var(--panel-2);color:var(--muted);border:1px solid var(--line)}
+.dots::after{content:'';animation:dots 1.2s steps(4) infinite}
+@keyframes dots{0%{content:''}25%{content:'.'}50%{content:'..'}75%{content:'...'}}
+
 /* ---------- report / guide ---------- */
 .doc h2{font-size:20px;margin-bottom:6px}
 .doc h3{font-size:16px;margin:18px 0 6px}
@@ -223,7 +247,7 @@ ul.clean li{margin:2px 0}
     <p>AI-Powered Operations Management Simulator</p>
   </div>
   <div class="spacer"></div>
-  <span class="pill" title="The agent is deterministic and rule-based. No LLM or internet connection is used.">Rule-based AI agent · no LLM · deterministic</span>
+  <span class="pill" id="modePill" title="Simulation results and the built-in agent are deterministic and rule-based. The optional chat agent uses a live LLM (Claude) only if you add your own API key.">Rule-based agent · optional live LLM chat</span>
   <button class="btn small" id="themeBtn" title="Toggle light/dark theme">◐ Theme</button>
   <button class="btn small" id="resetAllBtn" title="Clear all runs in all topics and restore defaults">Reset all</button>
 </header>
@@ -1267,7 +1291,8 @@ function renderAI(t) {
   if (!run) {
     side.innerHTML = head + `<div class="ai-section"><p class="small">I watch every run in this topic, log your decisions and KPIs, and report <b>after</b> each run. I never interrupt.</p>
       <h4>What I do after each run</h4><ol class="small" style="padding-left:18px;margin:0"><li>Log your decisions and KPI changes</li><li>Diagnose inefficiencies and likely causes</li><li>Test feasible alternatives with the same simulation engine</li><li>Compare them on cost, output, delays and service</li><li>Recommend the best option and explain the trade-offs</li></ol>
-      <p class="small muted">All my numbers come from the deterministic simulation. Nothing is estimated or invented.</p></div></div>` + activityCard();
+      <p class="small muted">All my numbers come from the deterministic simulation. Nothing is estimated or invented.</p></div></div>` + chatHTML(t) + activityCard();
+    bindChat(t);
     return;
   }
   const a = run.analysis, b = a.best, k = t.kpis.find(k => k.key === t.objective.key);
@@ -1294,8 +1319,9 @@ function renderAI(t) {
     <div class="ai-section"><h4>Trade-offs explained</h4><p class="small" style="margin:0">${t.explain(run.p, run.r, b)}</p></div>
     <div class="ai-section"><h4>Lessons from this run</h4><ul class="clean small">${uniqueLessons(t, a.issues).map(l => `<li>${esc(l)}</li>`).join('')}</ul></div>`;
   }
-  html += '</div>' + activityCard();
+  html += '</div>' + chatHTML(t) + activityCard();
   side.innerHTML = html;
+  bindChat(t);
   $('#adviceBtn').onclick = () => { state.adviceOpen[t.id] = !state.adviceOpen[t.id]; logActivity(t, state.adviceOpen[t.id] ? 'Advice requested' : 'Advice hidden'); renderAI(t); };
   const ap = $('#applyBtn');
   if (ap) ap.onclick = () => {
@@ -1429,8 +1455,254 @@ function guideHTML() {
     <li><b>Simulates</b> every alternative with the <i>same</i> engine and scenario (same random demand stream), so differences come only from the decision.</li>
     <li><b>Ranks</b> on the topic objective (profit, total cost, penalty), respecting constraints such as the service-level target, and lists what the best option gains and gives up.</li>
     <li><b>Reports</b> after the run, never during. Detailed advice appears only when you press <i>Get AI advice</i>.</li></ol>
+  <h3>Optional: live AI agent chat</h3>
+  <p>The <b>Ask the AI agent</b> box (right panel) lets students ask free-form questions such as “Should I add a machine at B?” or “What if demand rises 30%?”. With a Claude API key (Live LLM settings), a live LLM agent answers. It has four tools: read the current state, run the simulation as a sandbox, run the optimizer, and propose settings. It must quote only numbers those tools return. Suggestions appear as an <i>Apply suggested settings</i> button; nothing changes until the student applies and runs. Without a key, the rule-based agent answers, so the demo still works offline and at no cost.</p>
+  <p class="small muted">Classroom tip: run the live agent from the instructor's machine with a spending-limited key. Don't save keys on shared computers.</p>
   <div class="callout"><b>Tips.</b> Change one decision at a time so cause and effect are clear. Scenario changes are marked ⚑ in the history. All results are reproducible: the same inputs always give the same numbers, which suits live demos. <b>Reset topic</b> restores defaults; <b>Reset all</b> clears the whole session.</div>
   </section>`;
+}
+
+/* ---------------- 7. Live AI agent (optional, Claude API) ----------------
+   A tool-using LLM agent. Every number it quotes must come from the tools below,
+   which call the same deterministic engine as the rest of the app.
+   Without an API key the chat answers with the rule-based agent instead. */
+const LLM = {
+  models: [['claude-opus-5-5', 'Claude Opus 5.5 (best)'], ['claude-sonnet-5-5', 'Claude Sonnet 5.5 (faster)'], ['claude-haiku-5-5', 'Claude Haiku 5.5 (cheapest)']],
+  model: 'claude-opus-5-5', key: '', remember: false, busy: false, chats: {}, drafts: {}, maxSteps: 8
+};
+try { const k = localStorage.getItem('opslab-key'); if (k) { LLM.key = k; LLM.remember = true; } const m = localStorage.getItem('opslab-model'); if (m && LLM.models.some(x => x[0] === m)) LLM.model = m; } catch (e) {}
+const getChat = id => (LLM.chats[id] = LLM.chats[id] || {view: [], api: []});
+
+const LLM_SYSTEM = `You are the OpsLab Operations Coach, a live AI agent inside a classroom simulator for an MBA Operations Management course. The student plays an operations manager. Six topics exist: bottleneck & capacity, inventory management, production scheduling, quality management, queue management, supply chain disruption. Each user message says which topic the student is on.
+
+How to work:
+- Call get_current_state first to see the inputs, the student's latest run and the rule-based agent's best alternative.
+- Test ideas with run_simulation (several calls in parallel are fine) or optimize. These run the app's deterministic engine.
+- Every number you state must come from a tool result in this conversation. Never estimate, round up from memory or invent KPIs. If you have not run something, run it or say you have not tested it.
+- When you recommend specific decision values you have tested, call propose_settings once so the student can apply them. Never claim you changed their inputs.
+
+How to answer:
+- Teach, don't just prescribe: name the operations concept (bottleneck, EOQ, safety stock, dispatching rules, cost of quality, Erlang C, Little's Law, resilience trade-offs) and explain the trade-off in plain language.
+- Lead with the answer. Keep it under about 180 words. Use short paragraphs or "- " bullets and **bold** for key numbers. No tables or headings.
+- Suggest one thing the student could try next.
+- Stay on operations management and this simulator. Politely steer other requests back.`;
+
+const LLM_TOOLS = [
+  {name: 'get_current_state', description: "Returns the current topic, every input (id, label, unit, role 'decision' or 'scenario', allowed range or options, current value), the objective, the KPIs and diagnosis of the student's latest run (null if none yet), and the rule-based agent's best alternative.",
+    input_schema: {type: 'object', properties: {}, additionalProperties: false}},
+  {name: 'run_simulation', description: "Runs the deterministic simulation for the current topic with the student's current inputs plus the given changes. Sandbox only: it does not change the student's inputs or history. Use it for every what-if before quoting numbers. Returns all KPIs, the objective value, whether constraints are met, and the diagnosis.",
+    input_schema: {type: 'object', properties: {
+      changes: {type: 'object', description: 'Map of input id to new value, e.g. {"mB": 2}, {"rule": "EDD"}, {"cont": true, "R": 2}. Use ids from get_current_state. Scenario inputs may be changed too, for what-if questions. Use {} to run the current inputs.'},
+      label: {type: 'string', description: 'Short name for this test, shown to the student.'}}, required: ['changes']}},
+  {name: 'optimize', description: 'Runs the rule-based optimizer (exhaustive or grid search over the decision inputs) for the current topic, optionally after applying scenario changes. Returns the top-ranked options with KPIs. Useful to check robustness when the scenario changes.',
+    input_schema: {type: 'object', properties: {scenario_changes: {type: 'object', description: 'Optional map of scenario input id to value, e.g. {"demand": 130}.'}}}},
+  {name: 'propose_settings', description: 'Shows the student an "Apply suggested settings" button in the chat for decision inputs you recommend. The student decides whether to apply and run. Only include decision inputs whose values you have tested with run_simulation.',
+    input_schema: {type: 'object', properties: {changes: {type: 'object', description: 'Map of decision input id to value.'}, summary: {type: 'string', description: 'One short line describing the proposal.'}}, required: ['changes', 'summary']}}
+];
+
+function applyChanges(t, base, changes, onlyRole) {
+  const p = JSON.parse(JSON.stringify(base)), errors = [];
+  Object.entries(changes || {}).forEach(([id, v]) => {
+    const x = t.params.find(q => q.id === id);
+    if (!x) { errors.push(`Unknown input "${id}". Valid ids: ${t.params.map(q => q.id).join(', ')}`); return; }
+    if (onlyRole && x.role !== onlyRole) { errors.push(`"${id}" is a ${x.role} input, not a ${onlyRole}`); return; }
+    if (x.type === 'checkbox') p[id] = v === true || v === 'true' || v === 1;
+    else if (x.type === 'text') p[id] = String(v);
+    else if (x.type === 'select') { const o = x.options.find(o => String(o[0]).toUpperCase() === String(v).toUpperCase()); if (!o) errors.push(`"${id}" must be one of ${x.options.map(o => o[0]).join(', ')}`); else p[id] = o[0]; }
+    else if (x.type === 'jobs') {
+      if (!Array.isArray(v) || v.some(j => !p.jobs.find(k => k.id === j.id))) errors.push('jobs must be an array of {id, p, d} using existing job ids');
+      else v.forEach(j => { const k = p.jobs.find(k => k.id === j.id); if (j.p != null) k.p = clamp(Math.round(+j.p), 1, 30); if (j.d != null) k.d = clamp(Math.round(+j.d), 1, 120); });
+    } else {
+      const n = +v; if (!isFinite(n)) { errors.push(`"${id}" must be a number`); return; }
+      const c = round(clamp(Math.round(n / x.step) * x.step, x.min, x.max), 4);
+      if (Math.abs(c - n) > 1e-9) errors.push(`Note: ${id}=${n} adjusted to ${c} (allowed ${x.min}–${x.max}, step ${x.step})`);
+      p[id] = c;
+    }
+  });
+  if (!errors.some(e => !e.startsWith('Note')) && t.validate) { const e = t.validate(p); if (e) errors.push(e); }
+  return {p, errors};
+}
+function kpiDump(t, r, p) {
+  const o = {};
+  t.kpis.forEach(k => { o[k.label] = fmtV(k.fmt, r[k.key]).replace(/&[a-z]+;/g, ''); });
+  if (t.feasible) o['Meets service target'] = t.feasible(r, p);
+  return o;
+}
+function paramDump(t, p) {
+  return t.params.map(x => {
+    const d = {id: x.id, label: x.label, role: x.role, value: p[x.id]};
+    if (x.unit) d.unit = x.unit;
+    if (x.type === 'select') d.options = x.options.map(o => o[0]);
+    else if (x.type === 'checkbox') d.type = 'boolean';
+    else if (x.type === 'text') d.type = 'text (used when rule = CUSTOM)';
+    else if (x.type !== 'jobs') Object.assign(d, {min: x.min, max: x.max, step: x.step});
+    if (x.help) d.note = x.help;
+    return d;
+  });
+}
+function runTool(t, name, input) {
+  const cur = state.inputs[t.id], obj = t.kpis.find(k => k.key === t.objective.key);
+  const objText = `${t.objective.dir === 'max' ? 'maximize' : 'minimize'} ${obj.label}`;
+  if (name === 'get_current_state') {
+    const run = lastRun(t.id);
+    return {note: 'Read the current state', out: {topic: t.name, role: t.role, objective: objText, inputs: paramDump(t, cur),
+      runs_so_far: state.runs[t.id].length,
+      latest_run: run ? {decisions: t.describe(run.p), kpis: kpiDump(t, run.r, run.p), diagnosis: run.analysis.issues.map(i => `${i.title}: ${i.text}`),
+        share_of_best_option: F.pct(run.analysis.eff),
+        rule_based_best: {option: run.analysis.best.name, decisions: t.describe(run.analysis.best.p), kpis: kpiDump(t, run.analysis.best.r, run.analysis.best.p)}} : null,
+      inputs_differ_from_latest_run: run ? JSON.stringify(run.p) !== JSON.stringify(cur) : null}};
+  }
+  if (name === 'run_simulation') {
+    const {p, errors} = applyChanges(t, cur, input.changes);
+    const hard = errors.filter(e => !e.startsWith('Note'));
+    if (hard.length) return {error: hard.join('; '), note: 'Simulation input rejected'};
+    const r = t.simulate(p);
+    const label = input.label || t.describe(p);
+    return {note: `Ran simulation: ${label} → ${obj.label} ${fmtV(obj.fmt, r[obj.key])}`,
+      out: {tested: label, decisions: t.describe(p), objective: objText, kpis: kpiDump(t, r, p), diagnosis: t.diagnose(p, r).map(i => i.title), notes: errors}};
+  }
+  if (name === 'optimize') {
+    const {p, errors} = applyChanges(t, cur, input.scenario_changes || {}, 'scenario');
+    const hard = errors.filter(e => !e.startsWith('Note'));
+    if (hard.length) return {error: hard.join('; '), note: 'Optimizer input rejected'};
+    const a = Agent.analyze(t, p, t.simulate(p));
+    return {note: `Ran optimizer: ${F.int(a.evaluated)} options tested → best ${t.describe(a.best.p)}`,
+      out: {objective: objText, options_evaluated: a.evaluated, ranked: a.ranked.slice(0, 5).map(c => ({rank: c.rank, option: c.isUser ? 'Student\'s current inputs' : c.name, decisions: t.describe(c.p), kpis: kpiDump(t, c.r, c.p)}))}};
+  }
+  if (name === 'propose_settings') {
+    const {p, errors} = applyChanges(t, cur, input.changes, 'decision');
+    const hard = errors.filter(e => !e.startsWith('Note'));
+    if (hard.length) return {error: hard.join('; '), note: 'Proposal rejected'};
+    return {note: null, proposal: {p, summary: input.summary || t.describe(p)}, out: {shown_to_student: true, decisions: t.describe(p)}};
+  }
+  return {error: `Unknown tool ${name}`};
+}
+
+async function callClaude(messages) {
+  const body = {model: LLM.model, max_tokens: 16000, system: LLM_SYSTEM, tools: LLM_TOOLS, messages,
+    output_config: {effort: 'medium'}, cache_control: {type: 'ephemeral'}};
+  const headers = {'content-type': 'application/json', 'x-api-key': LLM.key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true'};
+  if (LLM.model !== 'claude-haiku-5-5') { body.fallbacks = 'default'; headers['anthropic-beta'] = 'server-side-fallback-2026-07-01'; }
+  let res;
+  try { res = await fetch('https://api.anthropic.com/v1/messages', {method: 'POST', headers, body: JSON.stringify(body)}); }
+  catch (e) { throw new Error('Could not reach the Claude API. Check the internet connection (the rest of OpsLab works offline).'); }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const msg = data.error && data.error.message ? data.error.message : res.statusText;
+    if (res.status === 401) throw new Error('The API key was rejected (401). Check it in Live LLM settings.');
+    if (res.status === 429) throw new Error('Rate limit reached (429). Wait a moment and ask again.');
+    if (res.status === 529 || res.status >= 500) throw new Error(`The Claude API is busy or unavailable (${res.status}). Try again shortly.`);
+    throw new Error(`Claude API error ${res.status}: ${msg}`);
+  }
+  return data;
+}
+
+function refreshAI(t) { if (state.view === t.id) renderAI(t); }
+async function askLLM(t, question) {
+  const chat = getChat(t.id);
+  chat.view.push({role: 'user', text: question});
+  logActivity(t, 'Student asked: ' + question.slice(0, 60));
+  if (!LLM.key) { chat.view.push({role: 'assistant', text: ruleBasedReply(t), offline: true}); refreshAI(t); return; }
+  LLM.busy = true; refreshAI(t);
+  const startLen = chat.api.length;
+  chat.api.push({role: 'user', content: [{type: 'text', text: `[Topic: ${t.name}]\n${question}`}]});
+  try {
+    for (let step = 0; step < LLM.maxSteps; step++) {
+      const res = await callClaude(chat.api);
+      if (res.stop_reason === 'refusal') { chat.view.push({role: 'error', text: 'The model declined this request. Try rephrasing it as an operations question.'}); break; }
+      chat.api.push({role: 'assistant', content: res.content});
+      const text = res.content.filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
+      if (text) chat.view.push({role: 'assistant', text});
+      const uses = res.content.filter(b => b.type === 'tool_use');
+      if (!uses.length) { if (res.stop_reason === 'max_tokens') chat.view.push({role: 'error', text: 'The answer was cut off (length limit).'}); break; }
+      const results = uses.map(u => {
+        let r;
+        try { r = runTool(t, u.name, u.input || {}); } catch (e) { r = {error: 'Tool failed: ' + e.message}; }
+        if (r.note) chat.view.push({role: 'tool', text: r.note});
+        if (r.proposal) chat.view.push({role: 'proposal', text: r.proposal.summary, p: r.proposal.p});
+        return r.error ? {type: 'tool_result', tool_use_id: u.id, content: r.error, is_error: true}
+                       : {type: 'tool_result', tool_use_id: u.id, content: JSON.stringify(r.out)};
+      });
+      chat.api.push({role: 'user', content: results});
+      refreshAI(t);
+      if (step === LLM.maxSteps - 1) chat.view.push({role: 'error', text: 'The agent used its step limit for this question. Ask a narrower follow-up.'});
+    }
+    logActivity(t, 'Live agent answered (' + LLM.model + ')');
+  } catch (e) {
+    if (chat.api.length === startLen + 1) chat.api.length = startLen; // the question never reached the model
+    chat.view.push({role: 'error', text: e.message});
+  } finally { LLM.busy = false; refreshAI(t); }
+}
+
+function ruleBasedReply(t) {
+  const run = lastRun(t.id);
+  if (!run) return `**Rule-based reply** (no API key, so no live LLM).\n\nRun the simulation first. I can then diagnose your decisions and compare them with tested alternatives. Add an API key under *Live LLM settings* to chat with a live agent.`;
+  const a = run.analysis, k = t.kpis.find(k => k.key === t.objective.key), top = a.issues[0];
+  const lines = [`**Rule-based reply** (no API key, so no live LLM).`, ''];
+  if (a.isOptimal) lines.push(`Your latest run (${t.describe(run.p)}) is the best of the ${F.int(a.evaluated)} options I tested: **${fmtV(k.fmt, run.r[k.key])}**.`);
+  else lines.push(`Try **${t.describe(a.best.p)}**: ${k.label.toLowerCase()} **${fmtV(k.fmt, a.best.r[k.key])}** vs your ${fmtV(k.fmt, run.r[k.key])} (best of ${F.int(a.evaluated)} tested options).`);
+  if (top) lines.push('', `Main finding: **${top.title}**. ${top.text}`);
+  const l = uniqueLessons(t, a.issues)[0]; if (l) lines.push('', `Lesson: ${l}`);
+  lines.push('', 'Add an API key under *Live LLM settings* to ask free-form questions and what-ifs.');
+  return lines.join('\n');
+}
+
+function mdLite(s) {
+  const inline = x => esc(x).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/(^|[^*])\*(?!\s)([^*]+?)\*/g, '$1<i>$2</i>').replace(/`([^`]+)`/g, '<code>$1</code>');
+  const out = []; let list = null;
+  s.split('\n').forEach(line => {
+    const m = line.match(/^\s*(?:[-*•]|\d+\.)\s+(.*)/);
+    if (m) { if (!list) { list = []; out.push(list); } list.push(inline(m[1])); return; }
+    list = null;
+    if (line.trim()) out.push('<p>' + inline(line.replace(/^#+\s*/, '')) + '</p>');
+  });
+  return out.map(x => Array.isArray(x) ? '<ul>' + x.map(i => `<li>${i}</li>`).join('') + '</ul>' : x).join('');
+}
+
+function chatHTML(t) {
+  const chat = getChat(t.id), live = !!LLM.key;
+  const chips = ['How can I improve my last run?', 'Explain the trade-off in the recommendation', 'Stress-test my plan: what if conditions get worse?', 'Which concept should I learn from this?'];
+  const log = chat.view.map((m, i) => {
+    if (m.role === 'user') return `<div class="msg user">${esc(m.text)}</div>`;
+    if (m.role === 'tool') return `<div class="msg tool">⚙ ${esc(m.text)}</div>`;
+    if (m.role === 'error') return `<div class="msg error">${esc(m.text)}</div>`;
+    if (m.role === 'proposal') return `<div class="msg assistant"><span class="who">Suggested settings</span>${esc(m.text)}<div style="margin-top:6px"><button class="btn small primary" data-apply="${i}">Apply suggested settings</button></div></div>`;
+    return `<div class="msg assistant"><span class="who">${m.offline ? 'Rule-based agent' : 'Live AI agent'}</span>${mdLite(m.text)}</div>`;
+  }).join('');
+  return `<div class="card" id="chatCard"><h3>Ask the AI agent <span class="live ${live ? 'on' : 'off'}">${live ? '● Live LLM' : '○ Offline (rule-based)'}</span></h3>
+    <p class="small muted" style="margin:0">${live ? `Uses ${esc((LLM.models.find(m => m[0] === LLM.model) || [0, LLM.model])[1])}. It tests ideas by running this simulator, so every number it quotes is computed, not guessed.` : 'Add your Claude API key below to chat with a live LLM agent. Without one, the rule-based agent answers.'}</p>
+    ${log ? `<div class="chat-log" id="chatLog">${log}${LLM.busy ? '<div class="msg tool dots">Agent is thinking and running simulations</div>' : ''}</div>` : `<div class="chips">${chips.map(c => `<button class="chip" data-q="${esc(c)}">${esc(c)}</button>`).join('')}</div>`}
+    <div class="chat-in" style="margin-top:8px"><textarea id="chatInput" rows="2" placeholder="Ask for a suggestion, e.g. “Should I add a machine at B?”" ${LLM.busy ? 'disabled' : ''}>${esc(LLM.drafts[t.id] || '')}</textarea><button class="btn primary" id="chatSend" ${LLM.busy ? 'disabled' : ''}>Ask</button></div>
+    <div style="display:flex;gap:10px;align-items:center;margin-top:4px">${chat.view.length ? '<button class="btn ghost small" id="chatClear">Clear chat</button>' : ''}<span class="small muted" style="margin-left:auto">Enter to send · Shift+Enter for a new line</span></div>
+    <details class="llm-set" ${live ? '' : ''}><summary>Live LLM settings</summary>
+      <div class="row2"><input type="password" id="llmKey" placeholder="sk-ant-… (your Claude API key)" value="${esc(LLM.key)}" autocomplete="off"><select id="llmModel">${LLM.models.map(([v, l]) => `<option value="${v}" ${v === LLM.model ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></div>
+      <div class="row2"><label class="small"><input type="checkbox" id="llmRemember" ${LLM.remember ? 'checked' : ''}> Remember on this device</label><button class="btn small" id="llmSave">Save</button>${LLM.key ? '<button class="btn small ghost" id="llmForget">Forget key</button>' : ''}</div>
+      <p class="small muted" style="margin:6px 0 0">The key stays in this browser and is sent only to api.anthropic.com. Use a key with a spending limit, and don't tick “Remember” on shared classroom computers.</p>
+    </details></div>`;
+}
+function bindChat(t) {
+  const input = $('#chatInput'); if (!input) return;
+  const log = $('#chatLog'); if (log) log.scrollTop = log.scrollHeight;
+  const send = () => { const q = input.value.trim(); if (!q || LLM.busy) return; LLM.drafts[t.id] = ''; askLLM(t, q); };
+  input.addEventListener('input', () => { LLM.drafts[t.id] = input.value; });
+  input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
+  $('#chatSend').onclick = send;
+  $$('#chatCard .chip').forEach(c => c.onclick = () => { if (!LLM.busy) askLLM(t, c.dataset.q); });
+  const clr = $('#chatClear'); if (clr) clr.onclick = () => { LLM.chats[t.id] = {view: [], api: []}; renderAI(t); };
+  $$('#chatCard [data-apply]').forEach(b => b.onclick = () => {
+    const m = getChat(t.id).view[+b.dataset.apply], p = state.inputs[t.id];
+    t.params.filter(x => x.role === 'decision').forEach(x => { p[x.id] = JSON.parse(JSON.stringify(m.p[x.id])); });
+    logActivity(t, 'Live agent suggestion applied: ' + t.describe(p));
+    renderMain(); renderAI(t);
+    const rb = $('#runBtn'); if (rb) { rb.focus(); rb.scrollIntoView({block: 'center', behavior: 'smooth'}); }
+  });
+  $('#llmSave').onclick = () => {
+    LLM.key = $('#llmKey').value.trim(); LLM.model = $('#llmModel').value; LLM.remember = $('#llmRemember').checked;
+    try { if (LLM.remember && LLM.key) localStorage.setItem('opslab-key', LLM.key); else localStorage.removeItem('opslab-key'); localStorage.setItem('opslab-model', LLM.model); } catch (e) {}
+    logActivity(t, LLM.key ? 'Live LLM enabled (' + LLM.model + ')' : 'Live LLM disabled');
+    renderAI(t);
+  };
+  const fg = $('#llmForget'); if (fg) fg.onclick = () => { LLM.key = ''; LLM.remember = false; try { localStorage.removeItem('opslab-key'); } catch (e) {} logActivity(t, 'API key removed'); renderAI(t); };
 }
 
 /* ---------------- boot ---------------- */
@@ -1456,7 +1728,7 @@ try { const th = localStorage.getItem('opslab-theme'); if (th) document.document
 })();
 render();
 // Exposed for automated testing
-window.OpsLab = {TOPICS, TOPIC, Agent, state, defaults, render};
+window.OpsLab = {TOPICS, TOPIC, Agent, state, defaults, render, LLM, runTool};
 </script>
 </body>
 </html>

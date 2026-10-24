@@ -101,16 +101,26 @@ s += [table([['Step', 'What the agent does'],
     ['7. Report', 'The Session report compiles, per topic: decisions made, mistakes found (with run numbers), improvements and setbacks, share of best achieved, and lessons learned. It can be printed or saved as PDF.']],
     [W * 0.16, W * 0.84])]
 _side = Table([[img('agent.png', W * 0.36), [P('Agent panel', 'h2'), P('Right-hand panel after a Supply Chain run: score versus the best option found, decision tracking, diagnosis, and the recommendation with gains and give-ups. <i>Get AI advice</i> adds the ranked table of alternatives tested, the trade-off explanation and lessons.'),
-      P('Possible extension: the agent’s structured output (issues, ranked alternatives, KPIs) could be passed to an LLM to write the narrative. Every number would still come from the engine. This is optional and not needed for the demo.'),
+      P('This panel needs no API key. The optional live LLM chat below the panel builds on the same engine and optimizer.'),
       Spacer(1, 6), img('quality.png', W * 0.58), P('Quality topic: cost-of-quality breakdown, your plan vs the AI recommendation.', 'cap')]]], colWidths=[W * 0.38, W * 0.62])
 _side.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP')]))
 s += [Spacer(1, 4), _side]
+s += [P('Optional live AI agent (LLM chat)', 'h2'),
+      P('The <b>Ask the AI agent</b> chat box adds a live LLM agent (Claude, via the student’s or instructor’s own API key). It answers free-form questions such as “Should I add a machine at B?” or “What if demand rises 30%?” with a tool-use loop of up to 8 steps. It calls the Claude Messages API directly from the browser; no backend is needed.'),
+      table([['Tool', 'Purpose'],
+             ['get_current_state', 'Inputs with ranges and roles, the latest run’s KPIs and diagnosis, and the rule-based best option.'],
+             ['run_simulation', 'Sandbox what-if on the deterministic engine. It never changes the student’s inputs or history.'],
+             ['optimize', 'Runs the rule-based optimizer, optionally under changed scenario inputs, to check robustness.'],
+             ['propose_settings', 'Shows an “Apply suggested settings” button. The student decides whether to apply and run.']], [W * 0.25, W * 0.75], mono_cols=()),
+      Spacer(1, 3),
+      P('Guardrails: the system prompt requires that every number comes from a tool result; invalid inputs come back as tool errors; scenario-only and decision-only checks apply; it uses server-side refusal fallback and handles errors (bad key, rate limit, network). The key stays in the browser and is sent only to api.anthropic.com. Without a key, the chat returns the rule-based agent’s answer, so the basic demo needs no paid API.')]
 
 s += [P('5. Technologies', 'h1')]
-s += bullets(['One HTML5 file (about 1,500 lines) with embedded CSS and vanilla JavaScript. No frameworks, libraries, CDNs or network calls.',
+s += bullets(['One HTML5 file (about 1,750 lines) with embedded CSS and vanilla JavaScript. No frameworks, libraries, CDNs or network calls.',
               'Charts are hand-built inline SVG (grouped bars, lines, Gantt, stacked bars) with hover tooltips.',
               'Seeded PRNG (mulberry32) + Box–Muller for reproducible demand; Acklam inverse-normal for sigma levels; exact Erlang C.',
               'Responsive CSS grid (desktop three-column, tablet two-column, phone single column) with light and dark themes and print styles for the report.',
+              'Optional live agent: Claude Messages API (default model Claude Opus 5.5, adaptive thinking at medium effort) called with fetch from the browser using the user’s key, with a client-side tool-use loop over four simulator tools.',
               'Validation: automated headless-browser tests (Playwright + Chromium).'])
 
 s += [P('6. Usage instructions', 'h1')]
@@ -120,6 +130,7 @@ s += bullets(['Open <b>opslab.html</b> in Chrome, Edge, Firefox or Safari. It al
               'Press <b>Run simulation</b>. Read the KPI cards (▲/▼ vs the previous run), the chart and the before/after table.',
               'Read the agent’s report on the right. Press <b>Get AI advice</b> for the alternatives table, or <b>Apply recommendation</b> and then <b>Run again</b>.',
               '<b>Reset topic</b> restores defaults and clears that topic’s history. <b>Reset all</b> clears the whole session.',
+              'Optional: open <b>Live LLM settings</b> in the <i>Ask the AI agent</i> box, paste a Claude API key, and ask questions in plain language. Without a key the rule-based agent answers.',
               'Open <b>Session report</b> at the end and use <b>Print / save as PDF</b>.'])
 
 s += [P('7. Instructor guide', 'h1'), P('Learning objectives', 'h2')]
@@ -142,7 +153,8 @@ s += bullets(['Every topic: Run, Run again (identical results, so deterministic)
               'Every input in every topic (56 inputs, including the job table, rule selector, custom sequence and checkbox) changes the results or the agent’s recommendation. Inputs that matter only in some situations (e.g. backup premium when no backup is used) say so in their help text.',
               'Get AI advice, Hide advice, Apply recommendation → Run again reaches 100% of the best option in every topic.',
               'Input validation: an invalid custom sequence is rejected with a message; out-of-range numbers are clamped; an unstable queue is diagnosed.',
-              'Reset topic, Reset all, Session report, Instructor guide and theme toggle work; no JavaScript errors; no horizontal page scroll at 390 px phone width.'])
+              'Reset topic, Reset all, Session report, Instructor guide and theme toggle work; no JavaScript errors; no horizontal page scroll at 390 px phone width.',
+              'Live agent, tested against a mocked Claude API: correct headers and body; all tool results returned in one message with matching ids; assistant content (including thinking blocks) passed back unchanged; the simulation tool returns engine numbers ($1,920); bad inputs return is_error; the sandbox leaves inputs untouched; Apply suggested settings works; a 401 error is shown and rolled back; chats are kept per topic; Remember/Forget key works; no network calls without a key.'])
 
 def footer(c, d):
     c.saveState(); c.setFont('Sans', 7.5); c.setFillColor(MUTED)

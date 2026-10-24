@@ -19,6 +19,18 @@ Each topic has adjustable inputs with working defaults, **Run / Run again**, **R
 ## AI Operations Agent
 A **rule-based, deterministic** agent (no LLM; labelled in the UI). After every run it tracks your decisions, diagnoses inefficiencies, tests alternatives with the same engine (heuristics plus exhaustive or grid search), ranks them, recommends the best one and explains the trade-offs. It never interrupts: detailed advice appears only when you press **Get AI advice**. The **Session report** lists decisions, mistakes, improvements and lessons, and can be printed or saved as PDF.
 
+### Optional live AI agent (chat)
+The **Ask the AI agent** box lets students ask for suggestions in plain language. Paste a Claude API key under *Live LLM settings* (the default model is Claude Opus 5.5; Sonnet 5.5 and Haiku 5.5 are also offered). The browser then calls the Claude API directly and runs a tool-use loop with four tools:
+
+| Tool | What it does |
+|---|---|
+| `get_current_state` | inputs, latest run KPIs, diagnosis, rule-based best option |
+| `run_simulation` | sandbox what-if on the real engine (never changes the student's inputs) |
+| `optimize` | rule-based grid/exhaustive search, optionally under a changed scenario |
+| `propose_settings` | shows an *Apply suggested settings* button; the student decides |
+
+The agent is told to quote only numbers returned by these tools. The key stays in the browser and goes only to `api.anthropic.com`; it is saved only if you tick *Remember*. Without a key, the rule-based agent answers, so the basic demo needs no paid API.
+
 ## Classroom use (75 min)
 1. Set the role and explain decisions (blue) vs scenario inputs.
 2. Work through 3–4 topics: predict the best decision → run the defaults → change one decision → run again → open Get AI advice.

@@ -106,21 +106,28 @@ _side = Table([[img('agent.png', W * 0.36), [P('Agent panel', 'h2'), P('Right-ha
 _side.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP')]))
 s += [Spacer(1, 4), _side]
 s += [P('Optional live AI agent (LLM chat)', 'h2'),
-      P('The <b>Ask the AI agent</b> chat box adds a live LLM agent (Claude, via the student’s or instructor’s own API key). It answers free-form questions such as “Should I add a machine at B?” or “What if demand rises 30%?” with a tool-use loop of up to 8 steps. It calls the Claude Messages API directly from the browser; no backend is needed.'),
+      P('The <b>Ask the AI agent</b> chat box adds a live LLM agent that works with many providers. It answers free-form questions such as “Should I add a machine at B?” or “What if demand rises 30%?” with a tool-calling loop of up to 8 steps. No backend is needed.'),
+      table([['Provider', 'API format', 'Notes'],
+             ['Anthropic Claude', 'Claude Messages API', 'Default claude-opus-5-5; direct from browser'],
+             ['NVIDIA NIM (build.nvidia.com)', 'OpenAI-compatible', 'e.g. meta/llama-3.3-70b-instruct; needs the local proxy (CORS)'],
+             ['OpenAI, Groq, OpenRouter, Google Gemini', 'OpenAI-compatible', 'Usually direct; use the proxy if the browser is blocked'],
+             ['Ollama (local)', 'OpenAI-compatible', 'Free, no key; start with OLLAMA_ORIGINS="*" ollama serve'],
+             ['Any other endpoint', 'OpenAI-compatible', 'vLLM, self-hosted NIM, Together, Mistral…: set the base URL']], [W * 0.3, W * 0.22, W * 0.48]),
+      Spacer(1, 3),
       table([['Tool', 'Purpose'],
              ['get_current_state', 'Inputs with ranges and roles, the latest run’s KPIs and diagnosis, and the rule-based best option.'],
              ['run_simulation', 'Sandbox what-if on the deterministic engine. It never changes the student’s inputs or history.'],
              ['optimize', 'Runs the rule-based optimizer, optionally under changed scenario inputs, to check robustness.'],
              ['propose_settings', 'Shows an “Apply suggested settings” button. The student decides whether to apply and run.']], [W * 0.25, W * 0.75], mono_cols=()),
       Spacer(1, 3),
-      P('Guardrails: the system prompt requires that every number comes from a tool result; invalid inputs come back as tool errors; scenario-only and decision-only checks apply; it uses server-side refusal fallback and handles errors (bad key, rate limit, network). The key stays in the browser and is sent only to api.anthropic.com. Without a key, the chat returns the rule-based agent’s answer, so the basic demo needs no paid API.')]
+      P('Guardrails: the system prompt requires that every number comes from a tool result; invalid inputs come back as tool errors; scenario-only and decision-only checks apply; it handles errors (bad key, wrong model, rate limit, blocked browser call). Models without tool calling are detected automatically and switched to grounded mode, where OpsLab sends the pre-computed simulator data with the question. Keys stay in the browser, or pass through the user’s own local proxy (tools/llm-proxy.mjs: localhost only, allowlisted hosts). Without an LLM, the rule-based agent answers, so the basic demo needs no paid API.')]
 
 s += [P('5. Technologies', 'h1')]
-s += bullets(['One HTML5 file (about 1,750 lines) with embedded CSS and vanilla JavaScript. No frameworks, libraries, CDNs or network calls.',
+s += bullets(['One HTML5 file (about 1,850 lines) with embedded CSS and vanilla JavaScript. No frameworks, libraries, CDNs or network calls.',
               'Charts are hand-built inline SVG (grouped bars, lines, Gantt, stacked bars) with hover tooltips.',
               'Seeded PRNG (mulberry32) + Box–Muller for reproducible demand; Acklam inverse-normal for sigma levels; exact Erlang C.',
               'Responsive CSS grid (desktop three-column, tablet two-column, phone single column) with light and dark themes and print styles for the report.',
-              'Optional live agent: Claude Messages API (default model Claude Opus 5.5, adaptive thinking at medium effort) called with fetch from the browser using the user’s key, with a client-side tool-use loop over four simulator tools.',
+              'Optional live agent: two adapters, Claude Messages API (default Claude Opus 5.5) and OpenAI-compatible chat completions (NVIDIA NIM, OpenAI, Groq, OpenRouter, Gemini, Ollama, custom), sharing one client-side tool-calling loop over four simulator tools. An optional zero-dependency Node proxy (tools/llm-proxy.mjs) handles providers that block browser calls.',
               'Validation: automated headless-browser tests (Playwright + Chromium).'])
 
 s += [P('6. Usage instructions', 'h1')]
@@ -130,7 +137,7 @@ s += bullets(['Open <b>opslab.html</b> in Chrome, Edge, Firefox or Safari. It al
               'Press <b>Run simulation</b>. Read the KPI cards (▲/▼ vs the previous run), the chart and the before/after table.',
               'Read the agent’s report on the right. Press <b>Get AI advice</b> for the alternatives table, or <b>Apply recommendation</b> and then <b>Run again</b>.',
               '<b>Reset topic</b> restores defaults and clears that topic’s history. <b>Reset all</b> clears the whole session.',
-              'Optional: open <b>Live LLM settings</b> in the <i>Ask the AI agent</i> box, paste a Claude API key, and ask questions in plain language. Without a key the rule-based agent answers.',
+              'Optional: open <b>Live LLM settings</b> in the <i>Ask the AI agent</i> box, choose a provider (Claude, NVIDIA, OpenAI, Groq, OpenRouter, Gemini, Ollama, or custom), enter the model and key, and ask questions in plain language. For NVIDIA, first run <b>node tools/llm-proxy.mjs</b> and keep “Use local proxy” ticked. Without an LLM the rule-based agent answers.',
               'Open <b>Session report</b> at the end and use <b>Print / save as PDF</b>.'])
 
 s += [P('7. Instructor guide', 'h1'), P('Learning objectives', 'h2')]
@@ -154,7 +161,8 @@ s += bullets(['Every topic: Run, Run again (identical results, so deterministic)
               'Get AI advice, Hide advice, Apply recommendation → Run again reaches 100% of the best option in every topic.',
               'Input validation: an invalid custom sequence is rejected with a message; out-of-range numbers are clamped; an unstable queue is diagnosed.',
               'Reset topic, Reset all, Session report, Instructor guide and theme toggle work; no JavaScript errors; no horizontal page scroll at 390 px phone width.',
-              'Live agent, tested against a mocked Claude API: correct headers and body; all tool results returned in one message with matching ids; assistant content (including thinking blocks) passed back unchanged; the simulation tool returns engine numbers ($1,920); bad inputs return is_error; the sandbox leaves inputs untouched; Apply suggested settings works; a 401 error is shown and rolled back; chats are kept per topic; Remember/Forget key works; no network calls without a key.'])
+              'Live agent, tested against a mocked Claude API: correct headers and body; all tool results returned in one message with matching ids; assistant content (including thinking blocks) passed back unchanged; the simulation tool returns engine numbers ($1,920); bad inputs return is_error; the sandbox leaves inputs untouched; Apply suggested settings works; a 401 error is shown and rolled back; chats are kept per topic; Remember/Forget key works; no network calls without a key.',
+              'OpenAI-compatible path, tested end to end through the real local proxy against a fake NVIDIA-style server: request shape and Bearer auth; tool calls and tool messages with matching ids; JSON-string arguments parsed (invalid JSON reported to the model); <think> reasoning hidden; automatic grounded mode for a model that rejects tools; NVIDIA preset defaults; a clear message when the browser call is blocked; Ollama works without a key; the proxy rejects hosts outside its allowlist and answers CORS preflight.'])
 
 def footer(c, d):
     c.saveState(); c.setFont('Sans', 7.5); c.setFillColor(MUTED)

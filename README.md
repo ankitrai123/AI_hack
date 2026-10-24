@@ -19,8 +19,20 @@ Each topic has adjustable inputs with working defaults, **Run / Run again**, **R
 ## AI Operations Agent
 A **rule-based, deterministic** agent (no LLM; labelled in the UI). After every run it tracks your decisions, diagnoses inefficiencies, tests alternatives with the same engine (heuristics plus exhaustive or grid search), ranks them, recommends the best one and explains the trade-offs. It never interrupts: detailed advice appears only when you press **Get AI advice**. The **Session report** lists decisions, mistakes, improvements and lessons, and can be printed or saved as PDF.
 
-### Optional live AI agent (chat)
-The **Ask the AI agent** box lets students ask for suggestions in plain language. Paste a Claude API key under *Live LLM settings* (the default model is Claude Opus 5.5; Sonnet 5.5 and Haiku 5.5 are also offered). The browser then calls the Claude API directly and runs a tool-use loop with four tools:
+### Optional live AI agent (chat), with any LLM provider
+The **Ask the AI agent** box lets students ask for suggestions in plain language. Under *Live LLM settings*, pick a provider, a model and a key:
+
+| Provider | API format | Direct from browser? |
+|---|---|---|
+| Anthropic Claude (default `claude-opus-5-5`) | Claude Messages API | yes |
+| **NVIDIA NIM** (build.nvidia.com, e.g. `meta/llama-3.3-70b-instruct`) | OpenAI-compatible | no, use the local proxy (below) |
+| OpenAI, Groq, OpenRouter, Google Gemini | OpenAI-compatible | usually yes; use the proxy if the browser is blocked |
+| Ollama (local, free, no key) | OpenAI-compatible | yes, start with `OLLAMA_ORIGINS="*" ollama serve` |
+| Any other OpenAI-compatible endpoint (vLLM, self-hosted NIM, Together, Mistral…) | OpenAI-compatible | set the base URL |
+
+Model names are suggestions; type any model id your provider offers.
+
+The agent runs a tool-calling loop over four tools that call the real simulation engine:
 
 | Tool | What it does |
 |---|---|
@@ -29,7 +41,15 @@ The **Ask the AI agent** box lets students ask for suggestions in plain language
 | `optimize` | rule-based grid/exhaustive search, optionally under a changed scenario |
 | `propose_settings` | shows an *Apply suggested settings* button; the student decides |
 
-The agent is told to quote only numbers returned by these tools. The key stays in the browser and goes only to `api.anthropic.com`; it is saved only if you tick *Remember*. Without a key, the rule-based agent answers, so the basic demo needs no paid API.
+The agent is told to quote only numbers returned by these tools. If a model can't do tool calling, OpsLab detects this and switches that chat to *grounded mode*: it sends the pre-computed simulator data with the question and has the model explain it. Without any LLM connected, the rule-based agent answers, so the basic demo needs no paid API.
+
+**Local proxy (only for providers that block browser calls, such as NVIDIA):**
+```
+node tools/llm-proxy.mjs        # Node 18+, no install; listens on http://localhost:8787
+```
+Then tick *Use local proxy* in Live LLM settings. The proxy listens on localhost only and forwards only to an allowlist of provider hosts (add more with `EXTRA_HOSTS=host`).
+
+Keys stay in the browser (or go through your own local proxy) and are sent only to the chosen provider. They are saved only if you tick *Remember keys*.
 
 ## Classroom use (75 min)
 1. Set the role and explain decisions (blue) vs scenario inputs.

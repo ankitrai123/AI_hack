@@ -1456,7 +1456,7 @@ function guideHTML() {
     <li><b>Ranks</b> on the topic objective (profit, total cost, penalty), respecting constraints such as the service-level target, and lists what the best option gains and gives up.</li>
     <li><b>Reports</b> after the run, never during. Detailed advice appears only when you press <i>Get AI advice</i>.</li></ol>
   <h3>Optional: live AI agent chat</h3>
-  <p>The <b>Ask the AI agent</b> box (right panel) lets students ask free-form questions such as “Should I add a machine at B?” or “What if demand rises 30%?”. With a Claude API key (Live LLM settings), a live LLM agent answers. It has four tools: read the current state, run the simulation as a sandbox, run the optimizer, and propose settings. It must quote only numbers those tools return. Suggestions appear as an <i>Apply suggested settings</i> button; nothing changes until the student applies and runs. Without a key, the rule-based agent answers, so the demo still works offline and at no cost.</p>
+  <p>The <b>Ask the AI agent</b> box (right panel) lets students ask free-form questions such as “Should I add a machine at B?” or “What if demand rises 30%?”. Connect any LLM under <i>Live LLM settings</i>: Anthropic Claude, NVIDIA NIM, OpenAI, Groq, OpenRouter, Google Gemini, a local Ollama model, or any OpenAI-compatible endpoint. A live LLM agent then answers. For providers that block browser calls (e.g. NVIDIA), run <code>node tools/llm-proxy.mjs</code> and tick <i>Use local proxy</i>. Models without tool calling still work: OpsLab sends them pre-computed simulator data. It has four tools: read the current state, run the simulation as a sandbox, run the optimizer, and propose settings. It must quote only numbers those tools return. Suggestions appear as an <i>Apply suggested settings</i> button; nothing changes until the student applies and runs. Without a key, the rule-based agent answers, so the demo still works offline and at no cost.</p>
   <p class="small muted">Classroom tip: run the live agent from the instructor's machine with a spending-limited key. Don't save keys on shared computers.</p>
   <div class="callout"><b>Tips.</b> Change one decision at a time so cause and effect are clear. Scenario changes are marked ⚑ in the history. All results are reproducible: the same inputs always give the same numbers, which suits live demos. <b>Reset topic</b> restores defaults; <b>Reset all</b> clears the whole session.</div>
   </section>`;
@@ -1466,12 +1466,39 @@ function guideHTML() {
    A tool-using LLM agent. Every number it quotes must come from the tools below,
    which call the same deterministic engine as the rest of the app.
    Without an API key the chat answers with the rule-based agent instead. */
-const LLM = {
-  models: [['claude-opus-5-5', 'Claude Opus 5.5 (best)'], ['claude-sonnet-5-5', 'Claude Sonnet 5.5 (faster)'], ['claude-haiku-5-5', 'Claude Haiku 5.5 (cheapest)']],
-  model: 'claude-opus-5-5', key: '', remember: false, busy: false, chats: {}, drafts: {}, maxSteps: 8
+// Providers. "anthropic" uses the Claude Messages API; all others use the OpenAI-compatible
+// chat-completions format (NVIDIA NIM, OpenAI, Groq, OpenRouter, Gemini, Ollama, custom).
+// Model lists are suggestions only: any model id the provider offers can be typed in.
+const PROVIDERS = {
+  anthropic: {label: 'Anthropic Claude', format: 'anthropic', base: 'https://api.anthropic.com/v1', models: ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'], keyHint: 'sk-ant-…', browser: true},
+  nvidia: {label: 'NVIDIA NIM (build.nvidia.com)', format: 'openai', base: 'https://integrate.api.nvidia.com/v1', models: ['meta/llama-3.3-70b-instruct', 'meta/llama-3.1-405b-instruct', 'nvidia/llama-3.1-nemotron-70b-instruct', 'mistralai/mistral-large-2-instruct'], keyHint: 'nvapi-…', browser: false},
+  openai: {label: 'OpenAI', format: 'openai', base: 'https://api.openai.com/v1', models: ['gpt-4.1-mini', 'gpt-4.1', 'gpt-4o-mini', 'gpt-4o'], keyHint: 'sk-…', browser: true, maxField: 'max_completion_tokens'},
+  groq: {label: 'Groq', format: 'openai', base: 'https://api.groq.com/openai/v1', models: ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'], keyHint: 'gsk_…', browser: true},
+  openrouter: {label: 'OpenRouter (many models)', format: 'openai', base: 'https://openrouter.ai/api/v1', models: ['meta-llama/llama-3.3-70b-instruct', 'openai/gpt-4o-mini', 'google/gemini-2.5-flash', 'mistralai/mistral-large'], keyHint: 'sk-or-…', browser: true},
+  gemini: {label: 'Google Gemini', format: 'openai', base: 'https://generativelanguage.googleapis.com/v1beta/openai', models: ['gemini-2.5-flash', 'gemini-2.5-pro'], keyHint: 'AIza…', browser: true},
+  ollama: {label: 'Ollama (local, free, no key)', format: 'openai', base: 'http://localhost:11434/v1', models: ['llama3.1', 'qwen2.5', 'mistral-nemo'], noKey: true, browser: true},
+  custom: {label: 'Other OpenAI-compatible API', format: 'openai', base: '', models: [], keyHint: 'API key (if required)', browser: true}
 };
-try { const k = localStorage.getItem('opslab-key'); if (k) { LLM.key = k; LLM.remember = true; } const m = localStorage.getItem('opslab-model'); if (m && LLM.models.some(x => x[0] === m)) LLM.model = m; } catch (e) {}
-const getChat = id => (LLM.chats[id] = LLM.chats[id] || {view: [], api: []});
+const LLM = {provider: 'anthropic', cfg: {}, remember: false, proxyUrl: 'http://localhost:8787', busy: false, chats: {}, drafts: {}, maxSteps: 8};
+Object.keys(PROVIDERS).forEach(id => { LLM.cfg[id] = {key: '', model: PROVIDERS[id].models[0] || '', base: PROVIDERS[id].base, proxy: !PROVIDERS[id].browser}; });
+try {
+  const saved = JSON.parse(localStorage.getItem('opslab-llm') || 'null');
+  if (saved) {
+    if (PROVIDERS[saved.provider]) LLM.provider = saved.provider;
+    if (saved.proxyUrl) LLM.proxyUrl = saved.proxyUrl;
+    Object.entries(saved.cfg || {}).forEach(([id, c]) => { if (LLM.cfg[id]) Object.assign(LLM.cfg[id], c); });
+    LLM.remember = Object.values(saved.cfg || {}).some(c => c.key);
+  }
+} catch (e) {}
+const activeLLM = () => ({id: LLM.provider, ...PROVIDERS[LLM.provider], ...LLM.cfg[LLM.provider]});
+const llmLive = () => { const a = activeLLM(); return !!(a.model && a.base && (a.key || a.noKey)); };
+function saveLLM() {
+  try {
+    const cfg = {}; Object.entries(LLM.cfg).forEach(([id, c]) => { cfg[id] = {...c, key: LLM.remember ? c.key : ''}; });
+    localStorage.setItem('opslab-llm', JSON.stringify({provider: LLM.provider, proxyUrl: LLM.proxyUrl, cfg}));
+  } catch (e) {}
+}
+const getChat = id => (LLM.chats[id] = LLM.chats[id] || {view: [], api: [], sig: null, grounded: false});
 
 const LLM_SYSTEM = `You are the OpsLab Operations Coach, a live AI agent inside a classroom simulator for an MBA Operations Management course. The student plays an operations manager. Six topics exist: bottleneck & capacity, inventory management, production scheduling, quality management, queue management, supply chain disruption. Each user message says which topic the student is on.
 
@@ -1541,6 +1568,9 @@ function paramDump(t, p) {
   });
 }
 function runTool(t, name, input) {
+  input = {...input};
+  for (const k of ['changes', 'scenario_changes']) if (typeof input[k] === 'string') { try { input[k] = input[k].trim() ? JSON.parse(input[k]) : {}; } catch (e) { return {error: `"${k}" must be a JSON object, e.g. {"mB": 2}`}; } }
+  for (const k of ['changes', 'scenario_changes']) if (input[k] != null && (typeof input[k] !== 'object' || Array.isArray(input[k]))) return {error: `"${k}" must be an object mapping input ids to values`};
   const cur = state.inputs[t.id], obj = t.kpis.find(k => k.key === t.objective.key);
   const objText = `${t.objective.dir === 'max' ? 'maximize' : 'minimize'} ${obj.label}`;
   if (name === 'get_current_state') {
@@ -1578,23 +1608,81 @@ function runTool(t, name, input) {
   return {error: `Unknown tool ${name}`};
 }
 
-async function callClaude(messages) {
-  const body = {model: LLM.model, max_tokens: 16000, system: LLM_SYSTEM, tools: LLM_TOOLS, messages,
-    output_config: {effort: 'medium'}, cache_control: {type: 'ephemeral'}};
-  const headers = {'content-type': 'application/json', 'x-api-key': LLM.key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true'};
-  if (LLM.model !== 'claude-haiku-5-5') { body.fallbacks = 'default'; headers['anthropic-beta'] = 'server-side-fallback-2026-07-01'; }
+// --- provider adapters -------------------------------------------------------
+function endpoint(a, path) {
+  const url = a.base.replace(/\/+$/, '') + path;
+  if (!a.proxy) return url;
+  const m = url.match(/^(https?):\/\/(.+)$/);
+  return LLM.proxyUrl.replace(/\/+$/, '') + '/' + m[1] + '/' + m[2];
+}
+async function postJSON(a, url, headers, body) {
   let res;
-  try { res = await fetch('https://api.anthropic.com/v1/messages', {method: 'POST', headers, body: JSON.stringify(body)}); }
-  catch (e) { throw new Error('Could not reach the Claude API. Check the internet connection (the rest of OpsLab works offline).'); }
+  try { res = await fetch(url, {method: 'POST', headers, body: JSON.stringify(body)}); }
+  catch (e) {
+    if (a.proxy) throw new Error(`Could not reach the local proxy at ${LLM.proxyUrl}. Start it with: node tools/llm-proxy.mjs`);
+    if (a.id === 'ollama') throw new Error('Could not reach Ollama. Start it with OLLAMA_ORIGINS="*" ollama serve, and pull the model first (ollama pull ' + a.model + ').');
+    throw new Error(`The browser could not reach ${a.label}. Either there is no internet connection, or the provider blocks direct browser calls (CORS). Tick "Use local proxy" and run: node tools/llm-proxy.mjs`);
+  }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    const msg = data.error && data.error.message ? data.error.message : res.statusText;
-    if (res.status === 401) throw new Error('The API key was rejected (401). Check it in Live LLM settings.');
-    if (res.status === 429) throw new Error('Rate limit reached (429). Wait a moment and ask again.');
-    if (res.status === 529 || res.status >= 500) throw new Error(`The Claude API is busy or unavailable (${res.status}). Try again shortly.`);
-    throw new Error(`Claude API error ${res.status}: ${msg}`);
+    const raw = (data.error && (data.error.message || data.error)) || data.detail || data.message || res.statusText;
+    const msg = typeof raw === 'string' ? raw : JSON.stringify(raw);
+    const err = new Error(
+      res.status === 401 || res.status === 403 ? `${a.label} rejected the API key (${res.status}). Check it in Live LLM settings.` :
+      res.status === 404 ? `${a.label} returned 404: check the model id "${a.model}" and the base URL. (${msg})` :
+      res.status === 429 ? 'Rate limit or quota reached (429). Wait a moment and ask again.' :
+      res.status >= 500 ? `${a.label} is busy or unavailable (${res.status}). Try again shortly.` :
+      `${a.label} error ${res.status}: ${msg}`);
+    err.status = res.status; err.detail = msg;
+    throw err;
   }
   return data;
+}
+// Claude Messages API. Returns {texts, calls, stop, assistant}.
+async function stepAnthropic(a, messages) {
+  const body = {model: a.model, max_tokens: 16000, system: LLM_SYSTEM, tools: LLM_TOOLS, messages, cache_control: {type: 'ephemeral'}};
+  const headers = {'content-type': 'application/json', 'x-api-key': a.key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true'};
+  if (/^claude-(opus|sonnet)-5|^claude-fable/.test(a.model)) { body.output_config = {effort: 'medium'}; body.fallbacks = 'default'; headers['anthropic-beta'] = 'server-side-fallback-2026-07-01'; }
+  const res = await postJSON(a, endpoint(a, '/messages'), headers, body);
+  return {texts: res.content.filter(b => b.type === 'text').map(b => b.text), stop: res.stop_reason === 'tool_use' ? 'tool' : res.stop_reason,
+    calls: res.content.filter(b => b.type === 'tool_use').map(b => ({id: b.id, name: b.name, input: b.input || {}})),
+    assistant: {role: 'assistant', content: res.content}};
+}
+const anthropicResults = results => ({role: 'user', content: results.map(r => ({type: 'tool_result', tool_use_id: r.id, content: r.content, ...(r.isError ? {is_error: true} : {})}))});
+// OpenAI-compatible chat completions (NVIDIA NIM, OpenAI, Groq, OpenRouter, Gemini, Ollama...).
+// Object-valued arguments are sent as JSON strings, which every provider's schema validator accepts.
+const OAI_TOOLS = LLM_TOOLS.map(tl => {
+  const props = {}; Object.entries(tl.input_schema.properties || {}).forEach(([k, v]) => { props[k] = v.type === 'object' ? {type: 'string', description: 'JSON object. ' + (v.description || '')} : v; });
+  return {type: 'function', function: {name: tl.name, description: tl.description, parameters: {type: 'object', properties: props, required: tl.input_schema.required || []}}};
+});
+async function stepOpenAI(a, messages, grounded) {
+  const body = {model: a.model, messages: [{role: 'system', content: LLM_SYSTEM + (grounded ? GROUNDED_NOTE : '')}, ...messages]};
+  body[a.maxField || 'max_tokens'] = 4096;
+  if (!grounded) { body.tools = OAI_TOOLS; body.tool_choice = 'auto'; }
+  const headers = {'content-type': 'application/json'};
+  if (a.key) headers.authorization = 'Bearer ' + a.key;
+  if (a.id === 'openrouter') headers['X-Title'] = 'OpsLab';
+  const res = await postJSON(a, endpoint(a, '/chat/completions'), headers, body);
+  const ch = res.choices && res.choices[0];
+  if (!ch) throw new Error('The provider returned no answer.');
+  const m = ch.message || {};
+  const content = typeof m.content === 'string' ? m.content : Array.isArray(m.content) ? m.content.map(p => p.text || '').join('') : '';
+  const calls = (m.tool_calls || []).map((c, i) => {
+    let input = {}, bad = null;
+    try { input = c.function.arguments ? (typeof c.function.arguments === 'string' ? JSON.parse(c.function.arguments) : c.function.arguments) : {}; } catch (e) { bad = 'Arguments were not valid JSON: ' + c.function.arguments; }
+    return {id: c.id || `call_${Date.now()}_${i}`, name: c.function && c.function.name, input: input || {}, bad};
+  });
+  const assistant = {role: 'assistant', content: content || (calls.length ? null : '')};
+  if (calls.length) assistant.tool_calls = calls.map((c, i) => ({id: c.id, type: 'function', function: {name: c.name, arguments: (m.tool_calls[i].function && typeof m.tool_calls[i].function.arguments === 'string') ? m.tool_calls[i].function.arguments : JSON.stringify(c.input)}}));
+  const text = content.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+  return {texts: text ? [text] : [], calls, stop: calls.length ? 'tool' : (ch.finish_reason === 'length' ? 'max_tokens' : 'end'), assistant};
+}
+const openaiResults = results => results.map(r => ({role: 'tool', tool_call_id: r.id, content: r.content}));
+// For models without tool calling: pre-compute the facts and let the model explain them.
+const GROUNDED_NOTE = `\n\nThis model is running without tools. Each question comes with SIMULATOR DATA computed by OpsLab. Use only numbers from that data. If a what-if is not covered, say so and suggest the student test it with Run simulation.`;
+function groundedContext(t) {
+  const st = runTool(t, 'get_current_state', {}).out, opt = runTool(t, 'optimize', {}).out;
+  return `\n\nSIMULATOR DATA (computed by OpsLab; quote only these numbers):\n${JSON.stringify({state: st, optimizer: opt})}`;
 }
 
 function refreshAI(t) { if (state.view === t.id) renderAI(t); }
@@ -1602,48 +1690,63 @@ async function askLLM(t, question) {
   const chat = getChat(t.id);
   chat.view.push({role: 'user', text: question});
   logActivity(t, 'Student asked: ' + question.slice(0, 60));
-  if (!LLM.key) { chat.view.push({role: 'assistant', text: ruleBasedReply(t), offline: true}); refreshAI(t); return; }
+  if (!llmLive()) { chat.view.push({role: 'assistant', text: ruleBasedReply(t), offline: true}); refreshAI(t); return; }
+  const a = activeLLM(), sig = a.id + '|' + a.model;
+  if (chat.sig !== sig) {
+    if (chat.api.length) chat.view.splice(chat.view.length - 1, 0, {role: 'tool', text: `Switched to ${a.label} · ${a.model}: starting a fresh conversation context.`});
+    chat.api = []; chat.sig = sig; chat.grounded = false;
+  }
   LLM.busy = true; refreshAI(t);
   const startLen = chat.api.length;
-  chat.api.push({role: 'user', content: [{type: 'text', text: `[Topic: ${t.name}]\n${question}`}]});
+  const userText = `[Topic: ${t.name}]\n${question}`;
   try {
     for (let step = 0; step < LLM.maxSteps; step++) {
-      const res = await callClaude(chat.api);
-      if (res.stop_reason === 'refusal') { chat.view.push({role: 'error', text: 'The model declined this request. Try rephrasing it as an operations question.'}); break; }
-      chat.api.push({role: 'assistant', content: res.content});
-      const text = res.content.filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
-      if (text) chat.view.push({role: 'assistant', text});
-      const uses = res.content.filter(b => b.type === 'tool_use');
-      if (!uses.length) { if (res.stop_reason === 'max_tokens') chat.view.push({role: 'error', text: 'The answer was cut off (length limit).'}); break; }
-      const results = uses.map(u => {
+      if (step === 0) chat.api.push(a.format === 'anthropic' ? {role: 'user', content: [{type: 'text', text: userText}]} : {role: 'user', content: userText + (chat.grounded ? groundedContext(t) : '')});
+      let res;
+      try { res = a.format === 'anthropic' ? await stepAnthropic(a, chat.api) : await stepOpenAI(a, chat.api, chat.grounded); }
+      catch (e) {
+        // Model does not support tool calling: switch this chat to grounded mode and retry once.
+        if (a.format === 'openai' && !chat.grounded && step === 0 && e.status && e.status >= 400 && e.status < 500 && /tool|function/i.test(e.detail || e.message)) {
+          chat.grounded = true; chat.api.length = startLen;
+          chat.view.push({role: 'tool', text: 'This model does not support tool calling, so the agent pre-computed the simulator data instead.'});
+          chat.api.push({role: 'user', content: userText + groundedContext(t)});
+          res = await stepOpenAI(a, chat.api, true);
+        } else throw e;
+      }
+      if (res.stop === 'refusal') { chat.view.push({role: 'error', text: 'The model declined this request. Try rephrasing it as an operations question.'}); break; }
+      chat.api.push(res.assistant);
+      if (res.texts.length) chat.view.push({role: 'assistant', text: res.texts.join('\n')});
+      if (!res.calls.length) { if (res.stop === 'max_tokens') chat.view.push({role: 'error', text: 'The answer was cut off (length limit).'}); break; }
+      const results = res.calls.map(c => {
         let r;
-        try { r = runTool(t, u.name, u.input || {}); } catch (e) { r = {error: 'Tool failed: ' + e.message}; }
+        if (c.bad) r = {error: c.bad};
+        else { try { r = runTool(t, c.name, c.input); } catch (e) { r = {error: 'Tool failed: ' + e.message}; } }
         if (r.note) chat.view.push({role: 'tool', text: r.note});
         if (r.proposal) chat.view.push({role: 'proposal', text: r.proposal.summary, p: r.proposal.p});
-        return r.error ? {type: 'tool_result', tool_use_id: u.id, content: r.error, is_error: true}
-                       : {type: 'tool_result', tool_use_id: u.id, content: JSON.stringify(r.out)};
+        return {id: c.id, content: r.error ? r.error : JSON.stringify(r.out), isError: !!r.error};
       });
-      chat.api.push({role: 'user', content: results});
+      if (a.format === 'anthropic') chat.api.push(anthropicResults(results)); else chat.api.push(...openaiResults(results));
       refreshAI(t);
       if (step === LLM.maxSteps - 1) chat.view.push({role: 'error', text: 'The agent used its step limit for this question. Ask a narrower follow-up.'});
     }
-    logActivity(t, 'Live agent answered (' + LLM.model + ')');
+    if (!chat.view.length || chat.view[chat.view.length - 1].role === 'user') chat.view.push({role: 'error', text: 'The model returned an empty answer. Try again or pick another model.'});
+    logActivity(t, `Live agent answered (${a.label} · ${a.model})`);
   } catch (e) {
-    if (chat.api.length === startLen + 1) chat.api.length = startLen; // the question never reached the model
+    if (chat.api.length === startLen + 1) chat.api.length = startLen; // the question never got an answer
     chat.view.push({role: 'error', text: e.message});
   } finally { LLM.busy = false; refreshAI(t); }
 }
 
 function ruleBasedReply(t) {
   const run = lastRun(t.id);
-  if (!run) return `**Rule-based reply** (no API key, so no live LLM).\n\nRun the simulation first. I can then diagnose your decisions and compare them with tested alternatives. Add an API key under *Live LLM settings* to chat with a live agent.`;
+  if (!run) return `**Rule-based reply** (no LLM connected).\n\nRun the simulation first. I can then diagnose your decisions and compare them with tested alternatives. Connect an LLM under *Live LLM settings* to chat with a live agent.`;
   const a = run.analysis, k = t.kpis.find(k => k.key === t.objective.key), top = a.issues[0];
-  const lines = [`**Rule-based reply** (no API key, so no live LLM).`, ''];
+  const lines = [`**Rule-based reply** (no LLM connected).`, ''];
   if (a.isOptimal) lines.push(`Your latest run (${t.describe(run.p)}) is the best of the ${F.int(a.evaluated)} options I tested: **${fmtV(k.fmt, run.r[k.key])}**.`);
   else lines.push(`Try **${t.describe(a.best.p)}**: ${k.label.toLowerCase()} **${fmtV(k.fmt, a.best.r[k.key])}** vs your ${fmtV(k.fmt, run.r[k.key])} (best of ${F.int(a.evaluated)} tested options).`);
   if (top) lines.push('', `Main finding: **${top.title}**. ${top.text}`);
   const l = uniqueLessons(t, a.issues)[0]; if (l) lines.push('', `Lesson: ${l}`);
-  lines.push('', 'Add an API key under *Live LLM settings* to ask free-form questions and what-ifs.');
+  lines.push('', 'Connect an LLM under *Live LLM settings* (Claude, NVIDIA, OpenAI, Groq, Gemini, Ollama…) to ask free-form questions and what-ifs.');
   return lines.join('\n');
 }
 
@@ -1660,7 +1763,7 @@ function mdLite(s) {
 }
 
 function chatHTML(t) {
-  const chat = getChat(t.id), live = !!LLM.key;
+  const chat = getChat(t.id), live = llmLive(), a = activeLLM();
   const chips = ['How can I improve my last run?', 'Explain the trade-off in the recommendation', 'Stress-test my plan: what if conditions get worse?', 'Which concept should I learn from this?'];
   const log = chat.view.map((m, i) => {
     if (m.role === 'user') return `<div class="msg user">${esc(m.text)}</div>`;
@@ -1669,15 +1772,20 @@ function chatHTML(t) {
     if (m.role === 'proposal') return `<div class="msg assistant"><span class="who">Suggested settings</span>${esc(m.text)}<div style="margin-top:6px"><button class="btn small primary" data-apply="${i}">Apply suggested settings</button></div></div>`;
     return `<div class="msg assistant"><span class="who">${m.offline ? 'Rule-based agent' : 'Live AI agent'}</span>${mdLite(m.text)}</div>`;
   }).join('');
+  const provOpts = Object.entries(PROVIDERS).map(([id, pv]) => `<option value="${id}" ${id === a.id ? 'selected' : ''}>${esc(pv.label)}</option>`).join('');
   return `<div class="card" id="chatCard"><h3>Ask the AI agent <span class="live ${live ? 'on' : 'off'}">${live ? '● Live LLM' : '○ Offline (rule-based)'}</span></h3>
-    <p class="small muted" style="margin:0">${live ? `Uses ${esc((LLM.models.find(m => m[0] === LLM.model) || [0, LLM.model])[1])}. It tests ideas by running this simulator, so every number it quotes is computed, not guessed.` : 'Add your Claude API key below to chat with a live LLM agent. Without one, the rule-based agent answers.'}</p>
+    <p class="small muted" style="margin:0">${live ? `Using ${esc(a.label)} · <span class="mono">${esc(a.model)}</span>. It tests ideas by running this simulator, so the numbers it quotes are computed, not guessed.` : 'Connect an LLM below (Claude, NVIDIA, OpenAI, Groq, OpenRouter, Gemini, local Ollama…) to chat with a live agent. Until then, the rule-based agent answers.'}</p>
     ${log ? `<div class="chat-log" id="chatLog">${log}${LLM.busy ? '<div class="msg tool dots">Agent is thinking and running simulations</div>' : ''}</div>` : `<div class="chips">${chips.map(c => `<button class="chip" data-q="${esc(c)}">${esc(c)}</button>`).join('')}</div>`}
     <div class="chat-in" style="margin-top:8px"><textarea id="chatInput" rows="2" placeholder="Ask for a suggestion, e.g. “Should I add a machine at B?”" ${LLM.busy ? 'disabled' : ''}>${esc(LLM.drafts[t.id] || '')}</textarea><button class="btn primary" id="chatSend" ${LLM.busy ? 'disabled' : ''}>Ask</button></div>
     <div style="display:flex;gap:10px;align-items:center;margin-top:4px">${chat.view.length ? '<button class="btn ghost small" id="chatClear">Clear chat</button>' : ''}<span class="small muted" style="margin-left:auto">Enter to send · Shift+Enter for a new line</span></div>
-    <details class="llm-set" ${live ? '' : ''}><summary>Live LLM settings</summary>
-      <div class="row2"><input type="password" id="llmKey" placeholder="sk-ant-… (your Claude API key)" value="${esc(LLM.key)}" autocomplete="off"><select id="llmModel">${LLM.models.map(([v, l]) => `<option value="${v}" ${v === LLM.model ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></div>
-      <div class="row2"><label class="small"><input type="checkbox" id="llmRemember" ${LLM.remember ? 'checked' : ''}> Remember on this device</label><button class="btn small" id="llmSave">Save</button>${LLM.key ? '<button class="btn small ghost" id="llmForget">Forget key</button>' : ''}</div>
-      <p class="small muted" style="margin:6px 0 0">The key stays in this browser and is sent only to api.anthropic.com. Use a key with a spending limit, and don't tick “Remember” on shared classroom computers.</p>
+    <details class="llm-set" id="llmSet" ${LLM.settingsOpen ? 'open' : ''}><summary>Live LLM settings</summary>
+      <div class="row2"><select id="llmProvider" aria-label="Provider">${provOpts}</select></div>
+      <div class="row2"><input id="llmModel" list="llmModels" placeholder="Model id" value="${esc(a.model)}" aria-label="Model id" style="flex:1;min-width:150px;border:1px solid var(--line);background:var(--panel-2);color:var(--ink);border-radius:7px;padding:5px 7px;font:inherit;font-size:12.5px"><datalist id="llmModels">${a.models.map(m => `<option value="${esc(m)}">`).join('')}</datalist></div>
+      <div class="row2"><input type="password" id="llmKey" placeholder="${esc(a.noKey ? 'No key needed' : a.keyHint || 'API key')}" value="${esc(a.key)}" autocomplete="off" aria-label="API key" ${a.noKey ? 'disabled' : ''}></div>
+      <div class="row2"><input id="llmBase" placeholder="Base URL, e.g. https://host/v1" value="${esc(a.base)}" aria-label="Base URL" style="flex:1;min-width:150px;border:1px solid var(--line);background:var(--panel-2);color:var(--ink);border-radius:7px;padding:5px 7px;font:inherit;font-size:12px"></div>
+      <div class="row2"><label class="small"><input type="checkbox" id="llmProxy" ${a.proxy ? 'checked' : ''}> Use local proxy (${esc(LLM.proxyUrl)})</label></div>
+      <div class="row2"><label class="small"><input type="checkbox" id="llmRemember" ${LLM.remember ? 'checked' : ''}> Remember keys on this device</label><button class="btn small" id="llmSave">Save</button>${a.key ? '<button class="btn small ghost" id="llmForget">Forget key</button>' : ''}</div>
+      <p class="small muted" style="margin:6px 0 0">${a.format === 'anthropic' ? 'Claude Messages API.' : 'OpenAI-compatible chat-completions API with tool calling. Models without tool calling still work: the agent sends pre-computed simulator data instead.'} ${a.browser ? '' : '<b>This provider blocks direct browser calls:</b> run <span class="mono">node tools/llm-proxy.mjs</span> and keep “Use local proxy” ticked. '}${a.id === 'ollama' ? 'Start Ollama with <span class="mono">OLLAMA_ORIGINS="*" ollama serve</span>. ' : ''}Model names change, so check your provider's model list. Keys stay in this browser and go only to the provider (or your local proxy). Use spending-limited keys, and don't tick “Remember” on shared computers.</p>
     </details></div>`;
 }
 function bindChat(t) {
@@ -1688,7 +1796,8 @@ function bindChat(t) {
   input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
   $('#chatSend').onclick = send;
   $$('#chatCard .chip').forEach(c => c.onclick = () => { if (!LLM.busy) askLLM(t, c.dataset.q); });
-  const clr = $('#chatClear'); if (clr) clr.onclick = () => { LLM.chats[t.id] = {view: [], api: []}; renderAI(t); };
+  const clr = $('#chatClear'); if (clr) clr.onclick = () => { LLM.chats[t.id] = {view: [], api: [], sig: null, grounded: false}; renderAI(t); };
+  $('#llmSet').addEventListener('toggle', e => { LLM.settingsOpen = e.target.open; });
   $$('#chatCard [data-apply]').forEach(b => b.onclick = () => {
     const m = getChat(t.id).view[+b.dataset.apply], p = state.inputs[t.id];
     t.params.filter(x => x.role === 'decision').forEach(x => { p[x.id] = JSON.parse(JSON.stringify(m.p[x.id])); });
@@ -1696,13 +1805,14 @@ function bindChat(t) {
     renderMain(); renderAI(t);
     const rb = $('#runBtn'); if (rb) { rb.focus(); rb.scrollIntoView({block: 'center', behavior: 'smooth'}); }
   });
+  const readForm = () => { const c = LLM.cfg[LLM.provider]; c.model = $('#llmModel').value.trim(); c.key = $('#llmKey').value.trim(); c.base = $('#llmBase').value.trim(); c.proxy = $('#llmProxy').checked; LLM.remember = $('#llmRemember').checked; };
+  $('#llmProvider').onchange = e => { readForm(); LLM.provider = e.target.value; LLM.settingsOpen = true; renderAI(t); };
   $('#llmSave').onclick = () => {
-    LLM.key = $('#llmKey').value.trim(); LLM.model = $('#llmModel').value; LLM.remember = $('#llmRemember').checked;
-    try { if (LLM.remember && LLM.key) localStorage.setItem('opslab-key', LLM.key); else localStorage.removeItem('opslab-key'); localStorage.setItem('opslab-model', LLM.model); } catch (e) {}
-    logActivity(t, LLM.key ? 'Live LLM enabled (' + LLM.model + ')' : 'Live LLM disabled');
-    renderAI(t);
+    readForm(); saveLLM();
+    logActivity(t, llmLive() ? `Live LLM enabled (${activeLLM().label} · ${activeLLM().model})` : 'Live LLM settings saved (not connected)');
+    LLM.settingsOpen = !llmLive(); renderAI(t);
   };
-  const fg = $('#llmForget'); if (fg) fg.onclick = () => { LLM.key = ''; LLM.remember = false; try { localStorage.removeItem('opslab-key'); } catch (e) {} logActivity(t, 'API key removed'); renderAI(t); };
+  const fg = $('#llmForget'); if (fg) fg.onclick = () => { LLM.cfg[LLM.provider].key = ''; saveLLM(); logActivity(t, 'API key removed'); renderAI(t); };
 }
 
 /* ---------------- boot ---------------- */
@@ -1728,7 +1838,7 @@ try { const th = localStorage.getItem('opslab-theme'); if (th) document.document
 })();
 render();
 // Exposed for automated testing
-window.OpsLab = {TOPICS, TOPIC, Agent, state, defaults, render, LLM, runTool};
+window.OpsLab = {TOPICS, TOPIC, Agent, state, defaults, render, LLM, runTool, PROVIDERS};
 </script>
 </body>
 </html>

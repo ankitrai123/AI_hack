@@ -1,0 +1,432 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>OpsLab AI Agents</title>
+<style>
+  @page { size: A4; margin: 0; }
+  :root {
+    --bg: #f6f6fb; --ink: #1d1d2b; --muted: #5d6075; --faint: #9aa0b4; --line: #e6e6f0;
+    --teal: #5ab3cb; --teal-d: #3f97b0; --pink: #d2407d; --pink-soft: #fbe8f0; --ring: #e7a9c2;
+    --blue-ring: #a8d2e5; --dot: #b3d4a5; --purple: #6b4fd1; --purple-soft: #ece8fb; --green: #1f8a52; --green-soft: #e6f5ec;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--ink); font-family: 'Inter', 'DejaVu Sans', sans-serif; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .page { width: 210mm; height: 297mm; padding: 16mm 15mm 14mm; position: relative; overflow: hidden; page-break-after: always; background: var(--bg); }
+  .page:last-child { page-break-after: auto; }
+  .foot { position: absolute; left: 15mm; right: 15mm; bottom: 8mm; display: flex; justify-content: space-between; font-size: 8.5pt; color: var(--faint); }
+  .kicker { font-size: 9pt; letter-spacing: .14em; text-transform: uppercase; color: var(--pink); font-weight: 700; margin: 0 0 4px; }
+  h1 { font-family: 'Inter Display', 'Inter', sans-serif; font-size: 25pt; line-height: 1.1; margin: 0 0 6px; font-weight: 800; letter-spacing: -.01em; }
+  h2 { font-family: 'Inter Display', 'Inter', sans-serif; font-size: 13.5pt; margin: 0 0 4px; font-weight: 700; }
+  p { font-size: 10.5pt; line-height: 1.5; margin: 0 0 8px; color: #2b2d3d; }
+  .lead { font-size: 12pt; color: var(--muted); line-height: 1.45; }
+  .small { font-size: 8.8pt; color: var(--muted); line-height: 1.45; }
+  .tabs { display: flex; gap: 0; background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 6px; width: max-content; margin: 0 auto 4mm; box-shadow: 0 2px 10px rgba(30,30,60,.04); }
+  .tabs span { padding: 7px 14px; font-weight: 600; font-size: 9.5pt; border-radius: 9px; color: #2b2d3d; display: flex; align-items: center; gap: 6px; }
+  .tabs span + span { border-left: 1px solid var(--line); border-radius: 0; }
+  .tabs .on { background: var(--purple-soft); color: var(--purple); border-radius: 9px; border-left: 0 !important; }
+  .card { background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; box-shadow: 0 2px 10px rgba(30,30,60,.04); }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+  .grid4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  .stat { text-align: center; padding: 10px 6px; }
+  .stat b { display: block; font-family: 'Inter Display', sans-serif; font-size: 22pt; color: var(--pink); line-height: 1; }
+  .stat span { font-size: 8.8pt; color: var(--muted); }
+  .node { width: 34px; height: 34px; border-radius: 50%; background: var(--teal); display: inline-flex; align-items: center; justify-content: center; flex: none; box-shadow: 0 0 0 4px #e3f2f7; }
+  .node svg { width: 20px; height: 20px; }
+  .node.pink { background: var(--pink); box-shadow: 0 0 0 4px var(--pink-soft); }
+  .agent { display: flex; gap: 11px; align-items: flex-start; }
+  .agent h2 { font-size: 11.5pt; margin: 1px 0 2px; }
+  .agent p { font-size: 9.2pt; margin: 0 0 4px; line-height: 1.42; }
+  .tag { display: inline-block; font-size: 7.8pt; font-weight: 600; padding: 2px 7px; border-radius: 99px; background: var(--purple-soft); color: var(--purple); margin: 2px 4px 0 0; }
+  .tag.g { background: var(--green-soft); color: var(--green); }
+  .tag.p { background: var(--pink-soft); color: var(--pink); }
+  .shot { border-radius: 12px; border: 1px solid var(--line); box-shadow: 0 6px 22px rgba(30,30,60,.10); display: block; max-width: 100%; background: #fff; }
+  .cap { font-size: 8.3pt; color: var(--faint); margin-top: 5px; text-align: center; }
+  .flow { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px 26px; position: relative; }
+  .step { position: relative; }
+  .step .n { width: 24px; height: 24px; border-radius: 50%; background: var(--pink); color: #fff; font-weight: 700; font-size: 10pt; display: inline-flex; align-items: center; justify-content: center; margin-right: 6px; }
+  .step h2 { font-size: 11pt; display: flex; align-items: center; margin-bottom: 4px; }
+  .step p { font-size: 9pt; margin: 0; }
+  .step:not(:nth-child(3n))::after { content: ''; position: absolute; right: -22px; top: 26px; width: 18px; border-top: 2px dotted var(--teal); }
+  .skill { padding: 9px 10px; }
+  .skill h2 { font-size: 10pt; display: flex; gap: 7px; align-items: center; margin-bottom: 3px; }
+  .skill .num { width: 20px; height: 20px; border-radius: 50%; background: var(--teal); color: #fff; font-size: 8.5pt; display: inline-flex; align-items: center; justify-content: center; flex: none; }
+  .skill p { font-size: 8.4pt; margin: 0 0 3px; line-height: 1.38; }
+  .skill .win { font-size: 8.4pt; color: var(--green); font-weight: 600; line-height: 1.35; }
+  ul.clean { list-style: none; padding: 0; margin: 0; }
+  ul.clean li { font-size: 9.6pt; line-height: 1.45; padding: 5px 0 5px 22px; position: relative; border-bottom: 1px dashed var(--line); }
+  ul.clean li:last-child { border-bottom: 0; }
+  ul.clean li::before { content: ''; position: absolute; left: 3px; top: 10px; width: 9px; height: 9px; border-radius: 50%; background: var(--teal); box-shadow: 0 0 0 3px #e3f2f7; }
+  .hero-title { text-align: center; margin-top: 2mm; }
+  .hero-title h1 { font-size: 30pt; }
+  .hero-title h1 em { font-style: normal; color: var(--pink); }
+  .divider { height: 1px; background: var(--line); margin: 10px 0; }
+  .callout { background: linear-gradient(135deg, #fff, var(--pink-soft)); border: 1px solid #f3cadb; border-radius: 14px; padding: 11px 14px; font-size: 10pt; line-height: 1.5; }
+  .toolrow { display: flex; gap: 8px; flex-wrap: wrap; }
+  .tool { border: 1px dashed var(--teal); background: #f0f8fb; color: var(--teal-d); border-radius: 10px; padding: 6px 9px; font-size: 8.8pt; font-weight: 600; }
+  .tool small { display: block; font-weight: 400; color: var(--muted); font-size: 8pt; }
+  .prov { display: inline-block; border: 1px solid var(--line); background: #fff; border-radius: 99px; padding: 4px 10px; font-size: 8.6pt; font-weight: 600; margin: 0 5px 5px 0; }
+  table.mini { border-collapse: collapse; width: 100%; font-size: 9pt; }
+  table.mini td, table.mini th { padding: 6px 8px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+  table.mini th { font-size: 8pt; text-transform: uppercase; letter-spacing: .08em; color: var(--faint); }
+</style>
+</head>
+<body>
+
+<!-- ============ PAGE 1: COVER ============ -->
+<section class="page">
+  <div class="tabs"><span class="on">✦ Agent canvas</span><span>Simulations</span><span>Study Room</span><span>Class room</span><span>AI models</span></div>
+  <div class="hero-title">
+    <p class="kicker">AI-agent product · Operations Management</p>
+    <h1>Ops<em>Lab</em>: an AI agent team<br>for operations decisions</h1>
+    <p class="lead" style="max-width:150mm;margin:4px auto 0;font-size:11pt">Students make real operations decisions. A team of AI agents watches, tests better options, explains the trade-offs and coaches them, all inside one web page.</p>
+  </div>
+  <div id="canvasCover" style="margin:0 auto;width:172mm"></div>
+  <p class="small" style="text-align:center;margin:-4mm 0 3mm"><b style="color:var(--pink)">Inner ring:</b> 7 AI agents around the OpsLab Agent hub · <b style="color:var(--pink)">Outer ring:</b> 12 simulation skills on one shared engine</p>
+  <div class="grid4" style="margin-top:0">
+    <div class="card stat"><b>7</b><span>AI agents working together</span></div>
+    <div class="card stat"><b>12</b><span>simulation skills, from bottlenecks to SARIMA</span></div>
+    <div class="card stat"><b>100%</b><span>of numbers computed, never guessed</span></div>
+    <div class="card stat"><b>0</b><span>installs, logins or fees to start</span></div>
+  </div>
+  <div class="foot"><span>OpsLab · AI-Powered Operations Management Simulator</span><span>1</span></div>
+</section>
+
+<!-- ============ PAGE 2: UTILITY ============ -->
+<section class="page">
+  <p class="kicker">Why it is useful</p>
+  <h1>Learn operations by deciding,<br>not just by reading formulas</h1>
+  <p class="lead">Most operations courses teach EOQ, queues or ARIMA as formulas on a slide. Students rarely get to make a decision, see what happens, and learn what would have been better. OpsLab gives every student that loop, with an AI agent team as their coach.</p>
+  <div class="grid3" style="margin-top:6mm">
+    <div class="card">
+      <div class="agent"><span class="node pink">%PERSON%</span><div><h2>For students</h2></div></div>
+      <ul class="clean" style="margin-top:6px">
+        <li>Play the operations manager in 12 cases</li>
+        <li>See results instantly: KPIs, charts, before vs after</li>
+        <li>Get a coach that says what went wrong and why</li>
+        <li>Turn your session slides into notes and quizzes</li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="agent"><span class="node">%BRAIN%</span><div><h2>For professors</h2></div></div>
+      <ul class="clean" style="margin-top:6px">
+        <li>Run a class game in a 75-minute session</li>
+        <li>Students join with a room code and roll number</li>
+        <li>Live leaderboard and the class's common mistakes</li>
+        <li>Fresh cases and quarterly or yearly campaigns</li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="agent"><span class="node" style="background:var(--purple);box-shadow:0 0 0 4px var(--purple-soft)">%SPARK%</span><div><h2>For programmes</h2></div></div>
+      <ul class="clean" style="margin-top:6px">
+        <li>One HTML file: open it in any browser</li>
+        <li>Works offline and costs nothing to run</li>
+        <li>Plug in any AI model, including free local Ollama</li>
+        <li>Results match Python (statsmodels) for analytics</li>
+      </ul>
+    </div>
+  </div>
+
+  <h2 style="margin-top:8mm">One session, start to finish</h2>
+  <div class="card" style="padding:14px">
+    <svg viewBox="0 0 700 150" style="width:100%;display:block">
+      <defs><marker id="ar" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#5ab3cb"/></marker></defs>
+      %JOURNEY%
+    </svg>
+  </div>
+
+  <div class="grid2" style="margin-top:6mm">
+    <div class="callout"><b>What changes for the learner.</b> Instead of “the answer is EOQ = 219”, students find out that their reorder point of 80 caused 16 stockout days. The agent then shows a policy that cuts total cost from $5,155 to $2,060 and explains why.</div>
+    <div class="callout"><b>What changes for the class.</b> Every run is re-computed by the same engine and scored against the best option the agents found, so discussions move from “who is right?” to “why is this better?”.</div>
+  </div>
+  <div class="foot"><span>OpsLab · AI agent team</span><span>2</span></div>
+</section>
+
+<!-- ============ PAGE 3: MEET THE AGENTS ============ -->
+<section class="page">
+  <p class="kicker">Meet the agent team</p>
+  <h1>Seven agents, one goal:<br>better operations decisions</h1>
+  <p class="lead">The <b>OpsLab Agent</b> sits at the centre and coordinates six specialists. They share one simulation engine, so they all work from the same computed facts.</p>
+  <div class="grid2" style="margin-top:5mm;gap:10px">
+    %AGENTCARDS%
+  </div>
+  <div class="foot"><span>OpsLab · AI agent team</span><span>3</span></div>
+</section>
+
+<!-- ============ PAGE 4: HOW AN AGENT RUN WORKS ============ -->
+<section class="page">
+  <p class="kicker">How the agents work together</p>
+  <h1>From your decision to<br>a better one, in six steps</h1>
+  <p class="lead">The agents never interrupt. They watch quietly and report after each run. Detailed advice opens only when you ask for it.</p>
+  <div class="flow" style="margin-top:6mm">
+    <div class="card step"><h2><span class="n">1</span>You decide</h2><p>Set the decisions in blue, e.g. a reorder point and order size. The scenario (demand, costs, lead time) is the world you face.</p></div>
+    <div class="card step"><h2><span class="n">2</span>Engine simulates</h2><p>The simulation engine plays out 90 days, 52 weeks or 1,000 seasons with fixed random streams, so results are repeatable.</p></div>
+    <div class="card step"><h2><span class="n">3</span>Coach diagnoses</h2><p>The Operations Coach spots what went wrong (“reorder point below lead-time demand”) and logs your decision history.</p></div>
+    <div class="card step"><h2><span class="n">4</span>Optimizer explores</h2><p>The Optimizer tests hundreds of alternatives on the same scenario: 1,589 inventory policies in about 70 ms.</p></div>
+    <div class="card step"><h2><span class="n">5</span>Agent recommends</h2><p>The best option, with gains and give-ups (“stockout cost −$2,760, holding +$865”) and a plain-language explanation.</p></div>
+    <div class="card step"><h2><span class="n">6</span>You apply &amp; learn</h2><p>Apply the recommendation or try your own idea, run again and watch your score climb toward 100% of the best option.</p></div>
+  </div>
+  <div class="grid2" style="margin-top:6mm;align-items:start">
+    <div>
+      <img class="shot" src="img/coach.png" style="width:56mm;margin:0 auto">
+      <p class="cap">The Operations Coach after one inventory run: diagnosis, best option, gains and give-ups.</p>
+    </div>
+    <div>
+      <h2>What the agent reports, every run</h2>
+      <ul class="clean">
+        <li><b>Score</b>: your result as a % of the best option found</li>
+        <li><b>Decision tracking</b>: what you changed and what it did</li>
+        <li><b>Diagnosis</b>: inefficiencies ranked by severity</li>
+        <li><b>Recommendation</b>: the best option with its trade-offs</li>
+        <li><b>Alternatives tested</b>: a ranked table you can open</li>
+        <li><b>Session report</b>: decisions, mistakes, improvements and lessons, ready to print</li>
+      </ul>
+      <div class="callout" style="margin-top:10px"><b>Why students trust it:</b> every number comes from the simulation engine. The agent cannot invent a result, and it never changes your inputs on its own.</div>
+    </div>
+  </div>
+  <div class="foot"><span>OpsLab · AI agent team</span><span>4</span></div>
+</section>
+
+<!-- ============ PAGE 5: SKILLS ============ -->
+<section class="page">
+  <p class="kicker">Agent skills</p>
+  <h1>12 simulation skills the<br>agents can play and coach</h1>
+  <p class="lead">Each skill is a full case: a brief, data exhibits, your decisions, and an optimizer that knows the theory. Figures below are the default case vs the agent's recommendation.</p>
+  <div class="grid3" style="margin-top:5mm;gap:8px">
+    %SKILLS%
+  </div>
+  <h2 style="margin-top:6mm">How much the agents improved each default case</h2>
+  <div class="card" style="padding:12px 14px"><svg viewBox="0 0 700 300" style="width:100%;display:block" font-family="Inter, sans-serif">%BARS%</svg>
+  <p class="small" style="margin:4px 0 0">Change in the topic's objective (cost, penalty or profit) from the default decision to the agent's recommendation, on the same scenario. Network design: the default also misses the service target; the agent's network meets it.</p></div>
+  <div class="foot"><span>OpsLab · AI agent team</span><span>5</span></div>
+</section>
+
+<!-- ============ PAGE 6: SPECIALISTS IN ACTION ============ -->
+<section class="page">
+  <p class="kicker">Specialist agents in action</p>
+  <h1>Agents that create, analyse<br>and teach</h1>
+  <div class="grid2" style="margin-top:5mm;align-items:start;gap:14px">
+    <div>
+      <div class="agent"><span class="node">%BRAIN%</span><div><h2>Analytics Agent</h2><p>Guides the time-series lab step by step: visualise, test, difference, read the ACF/PACF, fit and choose. It runs only the analysis you ask for, checks each decision, then <b>waits for you</b>.</p></div></div>
+      <img class="shot" src="img/analytics-side.png" style="width:50mm;margin:6px auto 0">
+      <p class="cap">Waiting at Step 5 after four correct decisions on a weekly-seasonal series.</p>
+    </div>
+    <div>
+      <img class="shot" src="img/acf.png" style="width:100%">
+      <p class="cap">The ACF the agent plotted on request: spikes at lag 1 and lag 7 point to SARIMA.</p>
+      <img class="shot" src="img/tournament.png" style="width:100%;margin-top:8px">
+      <p class="cap">The debrief's model tournament: ARIMA, SARIMA, Holt-Winters, SES, naïve and more, ranked on the same test data.</p>
+    </div>
+  </div>
+  <div class="divider" style="margin:4mm 0 4mm"></div>
+  <div class="grid2" style="align-items:start;gap:14px">
+    <div>
+      <div class="agent"><span class="node">%BRAIN%</span><div><h2>Scenario Agent</h2><p>Type a brief such as “monsoon floods hit a pharma plant in Vizag”. It writes a new case, or a whole campaign, and checks every value against the allowed limits. It never touches your decisions.</p></div></div>
+      <img class="shot" src="img/scenario.png" style="width:100%;margin-top:6px">
+    </div>
+    <div>
+      <div class="agent"><span class="node">%BRAIN%</span><div><h2>Study Agent</h2><p>Upload your session slides or readings (PowerPoint, PDF, Word, Excel…). You get study notes, visual explanations, quizzes, slide-grounded help, and links to the matching simulation.</p></div></div>
+      <div class="shot" style="margin-top:6px;max-height:46mm;overflow:hidden;position:relative"><img src="img/study.png" style="width:100%;display:block"><div style="position:absolute;left:0;right:0;bottom:0;height:14mm;background:linear-gradient(transparent,#fff)"></div></div>
+    </div>
+  </div>
+  <div class="foot"><span>OpsLab · AI agent team</span><span>6</span></div>
+</section>
+
+<!-- ============ PAGE 7: CHAT AGENT + TOOLS ============ -->
+<section class="page">
+  <p class="kicker">Ask the agent</p>
+  <h1>A tool-using AI agent that<br>tests ideas before answering</h1>
+  <p class="lead">Ask in plain words: “Should I add a machine at Assembly?” or “What if demand rises 30%?”. The Chat Agent runs the simulator as its toolbox and answers with computed numbers.</p>
+  <div class="card" style="margin-top:5mm;padding:14px">
+    <svg viewBox="0 0 700 250" style="width:100%;display:block">%TOOLFLOW%</svg>
+  </div>
+  <div class="grid2" style="margin-top:6mm;align-items:start;gap:14px">
+    <div>
+      <h2>Its four tools</h2>
+      <div class="toolrow" style="margin-top:6px">
+        <div class="tool">get_current_state<small>reads your inputs, last run and diagnosis</small></div>
+        <div class="tool">run_simulation<small>what-if tests in a sandbox</small></div>
+        <div class="tool">optimize<small>finds the best decisions, even under a new scenario</small></div>
+        <div class="tool">propose_settings<small>shows an “Apply” button: you decide</small></div>
+      </div>
+      <h2 style="margin-top:6mm">Connect any AI model</h2>
+      <div style="margin-top:6px"><span class="prov">Anthropic Claude</span><span class="prov">NVIDIA NIM</span><span class="prov">OpenAI</span><span class="prov">Groq</span><span class="prov">OpenRouter</span><span class="prov">Google Gemini</span><span class="prov">Ollama (free, local)</span><span class="prov">Any OpenAI-compatible endpoint</span></div>
+      <p class="small" style="margin-top:6px">Models without tool calling still work: OpsLab hands them the pre-computed simulator data (grounded mode). With no model connected, the OpsLab Agent answers from its own analysis.</p>
+    </div>
+    <div>
+      <img class="shot" src="img/chat.png" style="width:100%">
+      <p class="cap">The chat box sits under the agent's report on every simulation.</p>
+    </div>
+  </div>
+  <div class="foot"><span>OpsLab · AI agent team</span><span>7</span></div>
+</section>
+
+<!-- ============ PAGE 8: TRUST + CLASS ROOM ============ -->
+<section class="page">
+  <p class="kicker">Built-in trust · Class room</p>
+  <h1>Agents with guardrails,<br>and a whole class in one room</h1>
+  <div class="grid2" style="margin-top:5mm;align-items:start;gap:14px">
+    <div class="card">
+      <h2>Guardrails every agent follows</h2>
+      <ul class="clean" style="margin-top:4px">
+        <li><b>Computed, not guessed.</b> KPIs and advice come from the simulation engine.</li>
+        <li><b>You stay in charge.</b> Agents suggest; only you apply and run.</li>
+        <li><b>No interruptions.</b> Reports appear after a run; advice opens on request.</li>
+        <li><b>Waits for you.</b> The Analytics Agent never skips a step or gives the answer.</li>
+        <li><b>Limits enforced.</b> Generated cases are checked against every input's range.</li>
+        <li><b>Private by default.</b> Files are read in the browser. Text goes only to the AI model you choose; with Ollama it never leaves your laptop.</li>
+        <li><b>Same answer every time.</b> Seeded random streams make every run repeatable and fair.</li>
+      </ul>
+    </div>
+    <div>
+      <div class="agent"><span class="node">%BRAIN%</span><div><h2>Class Monitor</h2><p>The professor runs one command on a laptop. Students join with a room code and their roll number. Every run is re-computed by the same engine, so forged scores are ignored. The professor gets a live dashboard: best % per topic, a leaderboard, first-run vs best-run averages, the class's most common mistakes and a CSV for grading.</p></div></div>
+      <img class="shot" src="img/room.png" style="width:100%;margin-top:6px">
+      <p class="cap">Professor dashboard (test class).</p>
+    </div>
+  </div>
+  <h2 style="margin-top:7mm">Campaigns: the agents keep the game going</h2>
+  <div class="card" style="padding:12px 14px">
+    <svg viewBox="0 0 700 110" style="width:100%;display:block">%CAMPAIGN%</svg>
+    <p class="small" style="margin:6px 0 0">Play any simulation as 4 or 8 quarters, or 3 or 5 years. Each round brings new conditions: growth, a festive peak, a supplier shutdown revealed only after you commit, a wage deal, a recall. The agents score each round against the best plan.</p>
+  </div>
+  <div class="foot"><span>OpsLab · AI agent team</span><span>8</span></div>
+</section>
+
+<!-- ============ PAGE 9: GET STARTED ============ -->
+<section class="page">
+  <p class="kicker">Get started</p>
+  <h1>Up and running<br>in three steps</h1>
+  <div class="grid3" style="margin-top:6mm">
+    <div class="card step"><h2><span class="n">1</span>Open</h2><p>Open <b>opslab.html</b> in Chrome, Edge, Firefox or Safari. No install, no login, works offline.</p></div>
+    <div class="card step"><h2><span class="n">2</span>Play</h2><p>Pick a simulation, read the case data, set your decisions and press <b>Run</b>. The agent reports after each run.</p></div>
+    <div class="card step"><h2><span class="n">3</span>Level up</h2><p>Optional: connect an AI model for chat and AI-written cases, upload slides in the Study Room, or start a class room.</p></div>
+  </div>
+  <h2 style="margin-top:8mm">A 75-minute class with the agent team</h2>
+  <table class="mini card" style="padding:0">
+    <tr><th style="width:22mm">Minutes</th><th>What happens</th><th style="width:44mm">Agents at work</th></tr>
+    <tr><td>0–10</td><td>Professor opens a class room; students join with roll numbers and read the case brief.</td><td><span class="tag">Class Monitor</span></td></tr>
+    <tr><td>10–45</td><td>Teams play 3–4 simulations: predict, run, read the diagnosis, improve, run again.</td><td><span class="tag">Coach</span><span class="tag">Optimizer</span></td></tr>
+    <tr><td>45–60</td><td>Stress test: a new case or campaign round changes the world. Is the plan still best?</td><td><span class="tag">Scenario Agent</span><span class="tag">Chat Agent</span></td></tr>
+    <tr><td>60–70</td><td>Leaderboard and the class's common mistakes on screen; discuss the trade-offs.</td><td><span class="tag">Class Monitor</span></td></tr>
+    <tr><td>70–75</td><td>Print the session report. Homework: time-series lab and a Study Room quiz on today's slides.</td><td><span class="tag">Analytics Agent</span><span class="tag">Study Agent</span></td></tr>
+  </table>
+  <div id="canvasSmall" style="width:84mm;margin:6mm auto 0"></div>
+  <p style="text-align:center;font-weight:700;font-size:13pt;margin-top:2mm">OpsLab: one page, seven agents, twelve ways to practise operations.</p>
+  <p class="small" style="text-align:center">Files: <b>opslab.html</b> (the simulator) · <b>README.md</b> (quick start) · <b>docs/OpsLab_Documentation.pdf</b> (models, formulas and validation)</p>
+  <div class="foot"><span>OpsLab · AI agent team</span><span>9</span></div>
+</section>
+
+<script>
+const BRAIN = '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/><path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"/><path d="M17.6 6.5a3 3 0 0 0 .4-1.375"/><path d="M6 5.125A3 3 0 0 0 6.4 6.5"/><path d="M3.48 10.9a4 4 0 0 1 .58-.4"/><path d="M19.94 10.5a4 4 0 0 1 .58.4"/><path d="M6 18a4 4 0 0 1-1.97-.52"/><path d="M19.97 17.48A4 4 0 0 1 18 18"/></svg>';
+const PERSON = '<svg viewBox="0 0 24 24" fill="#fff"><circle cx="12" cy="7.5" r="4"/><path d="M4 21c.6-4.6 3.8-7 8-7s7.4 2.4 8 7z"/></svg>';
+const SPARK = '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round"><path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5 18 18M18 6l-2.5 2.5M8.5 15.5 6 18"/></svg>';
+
+const AGENTS = [
+  {name: 'Operations Coach', short: 'Operations\nCoach', what: 'Watches every run in silence, then reports: your score, what changed, and a diagnosis of what went wrong, ranked by severity.', when: 'After every run', out: ['Diagnosis', 'Session report']},
+  {name: 'Optimizer', short: 'Optimizer', what: 'Tests hundreds of alternatives on the same scenario (grid, exhaustive and textbook rules) and ranks them, so the best option is proven, not assumed.', when: 'After every run', out: ['Best option', 'Gains & give-ups']},
+  {name: 'Scenario Agent', short: 'Scenario\nAgent', what: 'Writes new cases and whole campaigns from a one-line brief, using any connected AI model, and keeps every value inside allowed limits.', when: 'On request', out: ['New case', 'Campaign rounds']},
+  {name: 'Analytics Agent', short: 'Analytics\nAgent', what: 'Coaches the time-series lab step by step: stationarity, differencing, ACF/PACF, and fitting ARIMA, SARIMA and smoothing models. It waits for your decision at every step.', when: 'Step by step', out: ['ADF, ACF, PACF', 'Model tournament']},
+  {name: 'Study Agent', short: 'Study\nAgent', what: 'Reads your session slides and readings, then writes notes, draws concept diagrams, sets quizzes and answers questions with slide references.', when: 'On upload', out: ['Notes', 'Quizzes', 'Help']},
+  {name: 'Chat Agent', short: 'Chat\nAgent', what: 'Answers free-form questions by calling simulator tools: it runs what-ifs and the optimizer before it replies, then offers an Apply button.', when: 'When you ask', out: ['What-ifs', 'Suggested settings']},
+  {name: 'Class Monitor', short: 'Class\nMonitor', what: 'Runs the class room: re-computes every student run, keeps a fair leaderboard and surfaces the class\'s most common mistakes for discussion.', when: 'During class', out: ['Leaderboard', 'Common mistakes']}
+];
+const SKILLS = [
+  ['Bottleneck & Capacity', 'Machines per station on a 3-step line.', '1/1/1 machines earn $1,340 a shift → 1/2/1 earns $1,920.'],
+  ['Inventory Management', 'Reorder point and order quantity under random demand.', '$5,155 and 16 stockout days → $2,060, 99.9% fill rate.'],
+  ['Production Scheduling', 'Dispatching rule or your own job sequence.', 'FCFS late penalty $22,000 → best of 720 sequences $4,000.'],
+  ['Quality Management', 'Inspection coverage and prevention spend.', 'Cost of quality $10,220 → $7,497 by preventing, not inspecting.'],
+  ['Queue Management', 'Number of servers vs a service target.', '4 servers: $252/h, target missed → 5 servers: $176/h, met.'],
+  ['Supply Chain Disruption', 'Backup supplier share, buffer stock, contingency plan.', '$20,976 and 480 units lost → $5,524, 100% fill rate.'],
+  ['Process Time Analytics', 'Batch size, SMED, cell layout, poka-yoke.', 'Lead time 43 h, $2,601/day → 15 h, $1,068/day.'],
+  ['Newsvendor & Contracts', 'Contract type and one-shot order quantity.', 'Expected profit $33,304 → revenue sharing: $43,113.'],
+  ['Bullwhip Effect', 'Forecasting, order smoothing, data sharing, lead time.', 'Factory swings 188× demand, $28,484 → 1×, $8,967.'],
+  ['Aggregate Planning', 'Level, chase or hybrid plan; workforce and overtime.', '$4.20M, 84% on time → $3.92M, 99% on time.'],
+  ['Network Design', 'Which of six Indian warehouses to open.', 'Target missed, $5.29M → 4 DCs meet it at $4.40M.'],
+  ['Time Series (ARIMA, SARIMA)', 'Eight stepwise forecasting decisions.', 'Every step checked; 10+ models ranked on held-out data.']
+];
+const GAINS = [['Scheduling', 82, 'cost'], ['Supply disruption', 74, 'cost'], ['Bullwhip', 69, 'cost'], ['Inventory', 60, 'cost'], ['Process time', 59, 'cost'], ['Bottleneck', 43, 'profit'], ['Queues', 30, 'cost'], ['Contracts', 29, 'profit'], ['Quality', 27, 'cost'], ['Network', 17, 'cost'], ['Aggregate plan', 7, 'cost']];
+function bars() {
+  let g = '';
+  GAINS.forEach(([n, v, k], i) => { const y = 8 + i * 26, w = v / 90 * 480; g += `<text x="140" y="${y + 14}" text-anchor="end" font-size="12" font-weight="600" fill="#1d1d2b">${n}</text><rect x="150" y="${y}" width="480" height="18" rx="9" fill="#f0f0f7"/><rect x="150" y="${y}" width="${w}" height="18" rx="9" fill="${k === 'profit' ? '#d2407d' : '#5ab3cb'}"/><text x="${156 + w}" y="${y + 14}" font-size="12" font-weight="700" fill="${k === 'profit' ? '#d2407d' : '#3f97b0'}">${k === 'profit' ? '+' : '−'}${v}% ${k}</text>`; });
+  return g;
+}
+const SHORT_SKILLS = ['Bottleneck', 'Inventory', 'Scheduling', 'Quality', 'Queues', 'Disruption', 'Process time', 'Contracts', 'Bullwhip', 'Planning', 'Network', 'Time series'];
+
+function canvasSVG({size = 700, labels = true, title = 'OpsLab Agent'}) {
+  const C = size / 2, R1 = size * 0.23, R2 = size * 0.37, R0 = size * 0.085, nr = size * 0.042, sr = size * 0.026;
+  const pt = (r, a) => [C + r * Math.cos(a), C + r * Math.sin(a)];
+  let g = '';
+  // faint background tiles
+  for (let i = -3; i <= 3; i++) for (let j = -3; j <= 3; j++) { const x = C + i * size * 0.11, y = C + j * size * 0.11; if (Math.hypot(x - C, y - C) < R2 - 20 && Math.hypot(x - C, y - C) > R0 + 30) g += `<rect x="${x - size * 0.035}" y="${y - size * 0.035}" width="${size * 0.07}" height="${size * 0.07}" rx="${size * 0.012}" fill="none" stroke="#ececf4" stroke-width="1.2"/>`; }
+  g += `<circle cx="${C}" cy="${C}" r="${R2 + size * 0.06}" fill="none" stroke="#e7a9c2" stroke-width="1.6"/>`;
+  g += `<circle cx="${C}" cy="${C}" r="${R2 - size * 0.02}" fill="none" stroke="#e2e2ee" stroke-width="1.2"/>`;
+  g += `<circle cx="${C}" cy="${C}" r="${R1}" fill="none" stroke="#a8d2e5" stroke-width="1.4"/>`;
+  g += `<defs><path id="ringPath${size}" d="M ${C - (R2 + size * 0.06) + 0} ${C} a ${R2 + size * 0.06} ${R2 + size * 0.06} 0 1 1 ${2 * (R2 + size * 0.06)} 0"/><filter id="sh${size}" x="-50%" y="-50%" width="200%" height="200%"><feDropShadow dx="0" dy="4" stdDeviation="${size * 0.012}" flood-color="#28284a" flood-opacity=".12"/></filter></defs>`;
+  if (false) g += `<text font-size="${size * 0.017}" letter-spacing="${size * 0.006}" fill="#d2407d" font-weight="700"><textPath href="#ringPath${size}" startOffset="25%" text-anchor="middle">12 SIMULATION SKILLS · ONE SHARED SIMULATION ENGINE</textPath></text>`;
+  const ai = AGENTS.map((a, i) => ({...a, ang: -Math.PI / 2 + i * 2 * Math.PI / AGENTS.length}));
+  const sk = SHORT_SKILLS.map((s, i) => ({s, ang: -Math.PI / 2 + Math.PI / 12 + i * 2 * Math.PI / 12}));
+  // dotted links: centre → agents (curved), skills → nearest agent
+  ai.forEach(a => { const [x, y] = pt(R1, a.ang), [mx, my] = pt(R1 * 0.55, a.ang + 0.35); g += `<path d="M${C},${C} Q${mx},${my} ${x},${y}" fill="none" stroke="#b3d4a5" stroke-width="${size * 0.005}" stroke-dasharray="1 ${size * 0.009}" stroke-linecap="round"/>`; });
+  sk.forEach(k => { const near = ai.reduce((b, a) => (Math.abs(Math.atan2(Math.sin(k.ang - a.ang), Math.cos(k.ang - a.ang))) < Math.abs(Math.atan2(Math.sin(k.ang - b.ang), Math.cos(k.ang - b.ang))) ? a : b)); const [x1, y1] = pt(R1, near.ang), [x2, y2] = pt(R2, k.ang), [mx, my] = pt((R1 + R2) / 2, (k.ang + near.ang) / 2 + 0.1); g += `<path d="M${x1},${y1} Q${mx},${my} ${x2},${y2}" fill="none" stroke="#c9dfc0" stroke-width="${size * 0.004}" stroke-dasharray="1 ${size * 0.009}" stroke-linecap="round"/>`; });
+  // skills
+  sk.forEach((k, i) => { const [x, y] = pt(R2, k.ang); g += `<circle cx="${x}" cy="${y}" r="${sr + size * 0.008}" fill="#fbe8f0"/><circle cx="${x}" cy="${y}" r="${sr}" fill="#fff" stroke="#e7a9c2" stroke-width="1.5"/><text x="${x}" y="${y + size * 0.009}" text-anchor="middle" font-size="${size * 0.024}" font-weight="700" fill="#d2407d">${i + 1}</text>`;
+    if (labels) { const out = Math.cos(k.ang), ly = y + Math.sin(k.ang) * sr * 1.9 + size * 0.008, lx = x + out * sr * 1.6; const anchor = Math.abs(out) < 0.3 ? 'middle' : out > 0 ? 'start' : 'end'; g += `<text x="${Math.abs(out) < 0.3 ? x : lx}" y="${Math.abs(out) < 0.3 ? (Math.sin(k.ang) > 0 ? y + sr + size * 0.03 : y - sr - size * 0.014) : ly}" text-anchor="${anchor}" font-size="${size * 0.02}" font-weight="600" fill="#5d6075">${k.s}</text>`; } });
+  // agents
+  ai.forEach(a => { const [x, y] = pt(R1, a.ang); g += `<g filter="url(#sh${size})"><circle cx="${x}" cy="${y}" r="${nr + size * 0.008}" fill="#e3f2f7"/><circle cx="${x}" cy="${y}" r="${nr}" fill="#5ab3cb"/></g><g transform="translate(${x - nr * 0.62},${y - nr * 0.62}) scale(${nr * 1.24 / 24})">${BRAIN.replace(/^<svg[^>]*>/, '').replace('</svg>', '').replace(/<path /g, '<path fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" ')}</g>`;
+    if (labels) { const lines = a.short.split('\n'), below = Math.sin(a.ang) > -0.2; lines.forEach((l, j) => { g += `<text x="${x}" y="${below ? y + nr + size * 0.034 + j * size * 0.028 : y - nr - size * 0.016 - (lines.length - 1 - j) * size * 0.028}" text-anchor="middle" font-size="${size * 0.025}" font-weight="700" fill="#1d1d2b" paint-order="stroke" stroke="#f6f6fb" stroke-width="${size * 0.008}">${l}</text>`; }); } });
+  // centre
+  g += `<g filter="url(#sh${size})"><circle cx="${C}" cy="${C}" r="${R0 + size * 0.012}" fill="#efe9f8"/><circle cx="${C}" cy="${C}" r="${R0}" fill="#fff"/></g>`;
+  g += `<circle cx="${C}" cy="${C - R0 * 0.42}" r="${R0 * 0.2}" fill="#d2407d"/><path d="M${C - R0 * 0.38},${C + R0 * 0.18} Q${C - R0 * 0.36},${C - R0 * 0.14} ${C},${C - R0 * 0.14} Q${C + R0 * 0.36},${C - R0 * 0.14} ${C + R0 * 0.38},${C + R0 * 0.18} Z" fill="#d2407d"/><text x="${C}" y="${C + R0 * 0.1}" text-anchor="middle" font-size="${R0 * 0.2}" font-weight="800" fill="#fff">AI</text>`;
+  g += `<text x="${C}" y="${C + R0 * 0.52}" text-anchor="middle" font-size="${R0 * 0.27}" font-weight="800" letter-spacing="${R0 * 0.03}" fill="#1d1d2b">OPS<tspan fill="#d2407d">L</tspan>AB</text><text x="${C}" y="${C + R0 * 0.76}" text-anchor="middle" font-size="${R0 * 0.15}" font-weight="600" fill="#5d6075">${title}</text>`;
+  return `<svg viewBox="0 0 ${size} ${size}" style="width:100%;display:block" font-family="Inter, sans-serif">${g}</svg>`;
+}
+
+function journey() {
+  const steps = [['Read the case', 'brief + data'], ['Decide', 'blue inputs'], ['Run', 'engine simulates'], ['Agent report', 'score + diagnosis'], ['AI advice', 'best option'], ['Improve', 'run again']];
+  let g = '';
+  steps.forEach((s, i) => { const x = 60 + i * 116, y = 70; g += `<circle cx="${x}" cy="${y}" r="27" fill="${i === 3 || i === 4 ? '#5ab3cb' : '#fff'}" stroke="${i === 3 || i === 4 ? '#5ab3cb' : '#e7a9c2'}" stroke-width="2"/>`;
+    g += i === 3 || i === 4 ? `<g transform="translate(${x - 13},${y - 13}) scale(1.08)">${BRAIN.replace(/^<svg[^>]*>/, '').replace('</svg>', '').replace(/<path /g, '<path fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" ')}</g>` : `<text x="${x}" y="${y + 7}" text-anchor="middle" font-size="20" font-weight="800" fill="#d2407d">${i + 1}</text>`;
+    g += `<text x="${x}" y="${y + 48}" text-anchor="middle" font-size="13" font-weight="700" fill="#1d1d2b">${s[0]}</text><text x="${x}" y="${y + 64}" text-anchor="middle" font-size="11" fill="#5d6075">${s[1]}</text>`;
+    if (i < steps.length - 1) g += `<path d="M${x + 31},${y} L${x + 85},${y}" stroke="#5ab3cb" stroke-width="2" stroke-dasharray="2 5" stroke-linecap="round" marker-end="url(#ar)"/>`; });
+  g += `<path d="M${60 + 5 * 116},${40} C${60 + 5 * 116},5 ${60 + 116},5 ${60 + 116},40" fill="none" stroke="#e7a9c2" stroke-width="1.6" stroke-dasharray="4 5" marker-end="url(#ar)"/><text x="${60 + 3 * 116}" y="16" text-anchor="middle" font-size="11" fill="#d2407d" font-weight="700">repeat until you reach 100% of the best option</text>`;
+  return g;
+}
+
+function toolflow() {
+  const brain = (x, y, s = 1) => `<g transform="translate(${x - 12 * s},${y - 12 * s}) scale(${s})">${BRAIN.replace(/^<svg[^>]*>/, '').replace('</svg>', '').replace(/<path /g, '<path fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" ')}</g>`;
+  let g = `<defs><marker id="ar2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#5ab3cb"/></marker></defs>`;
+  // student
+  g += `<circle cx="70" cy="125" r="38" fill="#fff" stroke="#e7a9c2" stroke-width="2"/><circle cx="70" cy="112" r="10" fill="#d2407d"/><path d="M50,142 Q52,124 70,124 Q88,124 90,142 Z" fill="#d2407d"/><text x="70" y="186" text-anchor="middle" font-size="13" font-weight="700">You ask</text><text x="70" y="202" text-anchor="middle" font-size="11" fill="#5d6075">“What if demand +30%?”</text>`;
+  // agent
+  g += `<circle cx="300" cy="125" r="50" fill="#e3f2f7"/><circle cx="300" cy="125" r="42" fill="#5ab3cb"/>${brain(300, 125, 1.6)}<text x="300" y="196" text-anchor="middle" font-size="13" font-weight="700">Chat Agent</text><text x="300" y="212" text-anchor="middle" font-size="11" fill="#5d6075">any AI model you connect</text>`;
+  g += `<path d="M112,125 L244,125" stroke="#5ab3cb" stroke-width="2" stroke-dasharray="2 5" stroke-linecap="round" marker-end="url(#ar2)"/>`;
+  // tools
+  const tools = ['get_current_state', 'run_simulation', 'optimize', 'propose_settings'];
+  tools.forEach((t, i) => { const y = 35 + i * 58; g += `<rect x="420" y="${y - 18}" width="150" height="36" rx="10" fill="#f0f8fb" stroke="#5ab3cb" stroke-dasharray="3 3"/><text x="495" y="${y + 5}" text-anchor="middle" font-size="12" font-weight="700" fill="#3f97b0" font-family="JetBrains Mono, monospace">${t}</text><path d="M352,125 Q385,${y} 418,${y}" fill="none" stroke="#b3d4a5" stroke-width="2.4" stroke-dasharray="1 5" stroke-linecap="round"/>`; });
+  g += `<text x="495" y="248" text-anchor="middle" font-size="11" fill="#5d6075">tools run the real simulation engine</text>`;
+  // answer
+  g += `<rect x="600" y="85" width="92" height="80" rx="14" fill="#fbe8f0" stroke="#e7a9c2"/><text x="646" y="113" text-anchor="middle" font-size="12" font-weight="700" fill="#d2407d">Answer</text><text x="646" y="131" text-anchor="middle" font-size="10" fill="#5d6075">computed</text><text x="646" y="145" text-anchor="middle" font-size="10" fill="#5d6075">numbers +</text><text x="646" y="159" text-anchor="middle" font-size="10" fill="#5d6075">Apply button</text>`;
+  g += `<path d="M572,125 L596,125" stroke="#5ab3cb" stroke-width="2" stroke-dasharray="2 5" marker-end="url(#ar2)"/>`;
+  return g;
+}
+
+function campaign() {
+  const r = ['Q1', 'Q2', 'Q3', 'Q4', 'Q1', 'Q2', 'Q3', 'Q4'], ev = ['Normal', 'Growth', 'Lead time ↑', 'Festive peak', 'Calm', 'Price rise', 'Shock', 'Peak'];
+  let g = `<path d="M40,45 L660,45" stroke="#e7a9c2" stroke-width="2" stroke-dasharray="3 6"/>`;
+  r.forEach((q, i) => { const x = 40 + i * 88.5, hot = i === 3 || i === 6 || i === 7; g += `<circle cx="${x}" cy="45" r="19" fill="${hot ? '#d2407d' : '#5ab3cb'}"/><text x="${x}" y="50" text-anchor="middle" font-size="12" font-weight="800" fill="#fff">${q}</text><text x="${x}" y="85" text-anchor="middle" font-size="11" font-weight="600" fill="#1d1d2b">${ev[i]}</text><text x="${x}" y="101" text-anchor="middle" font-size="9.5" fill="#5d6075">Year ${i < 4 ? 1 : 2}</text>`; });
+  return g;
+}
+
+const fill = (id, html) => { document.querySelectorAll('body *').forEach(() => {}); };
+let html = document.body.innerHTML;
+html = html.replace(/%BRAIN%/g, BRAIN).replace(/%PERSON%/g, PERSON).replace(/%SPARK%/g, SPARK)
+  .replace('%JOURNEY%', journey()).replace('%BARS%', bars()).replace('%TOOLFLOW%', toolflow()).replace('%CAMPAIGN%', campaign())
+  .replace('%AGENTCARDS%', AGENTS.map((a, i) => `<div class="card agent"><span class="node">${BRAIN}</span><div><h2>${a.name}</h2><p>${a.what}</p><span class="tag p">${a.when}</span>${a.out.map(o => `<span class="tag">${o}</span>`).join('')}</div></div>`).join('') + `<div class="card agent" style="background:linear-gradient(135deg,#fff,#fbe8f0)"><span class="node pink">${PERSON}</span><div><h2>OpsLab Agent (the hub)</h2><p>Coordinates the team: it decides which specialist acts, keeps your decision history, and turns their findings into one clear report and a printable session report.</p><span class="tag p">Always on</span><span class="tag g">Works with or without an AI model</span></div></div>`)
+  .replace('%SKILLS%', SKILLS.map((s, i) => `<div class="card skill"><h2><span class="num">${i + 1}</span>${s[0]}</h2><p>${s[1]}</p><div class="win">${s[2]}</div></div>`).join(''));
+document.body.innerHTML = html;
+document.getElementById('canvasCover').innerHTML = canvasSVG({size: 700});
+document.getElementById('canvasSmall').innerHTML = canvasSVG({size: 520, labels: false});
+</script>
+</body>
+</html>

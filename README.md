@@ -128,5 +128,8 @@ Fair play: the server **re-computes every run** from the student's decisions wit
 
 See the in-app **Instructor guide** for learning objectives and discussion prompts.
 
+## AI agent overview (PDF)
+`docs/OpsLab_AI_Agents.pdf` is a 9-page visual overview for students, professors and programme heads: the agent canvas (the OpsLab Agent hub, seven specialist agents and twelve simulation skills), what each agent does, how a decision flows through them, the chat agent's tools, guardrails, the class room and a 75-minute class plan. Rebuild it with `node docs/agents/build.js` (needs Playwright with Chromium).
+
 ## Rebuilding the PDF
 `python3 docs/build_pdf.py` (needs `reportlab`).

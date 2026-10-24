@@ -1471,7 +1471,7 @@ function guideHTML() {
 // Model lists are suggestions only: any model id the provider offers can be typed in.
 const PROVIDERS = {
   anthropic: {label: 'Anthropic Claude', format: 'anthropic', base: 'https://api.anthropic.com/v1', models: ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'], keyHint: 'sk-ant-…', browser: true},
-  nvidia: {label: 'NVIDIA NIM (build.nvidia.com)', format: 'openai', base: 'https://integrate.api.nvidia.com/v1', models: ['meta/llama-3.3-70b-instruct', 'meta/llama-3.1-405b-instruct', 'nvidia/llama-3.1-nemotron-70b-instruct', 'mistralai/mistral-large-2-instruct'], keyHint: 'nvapi-…', browser: false},
+  nvidia: {label: 'NVIDIA NIM (build.nvidia.com)', format: 'openai', base: 'https://integrate.api.nvidia.com/v1', models: ['nvidia/nemotron-3.5-super-vl-120b-a12b', 'nvidia/nemotron-3-ultra-550b-a55b'], keyHint: 'nvapi-…', browser: false, retired: ['meta/llama-3.3-70b-instruct', 'meta/llama-3.1-405b-instruct', 'nvidia/llama-3.1-nemotron-70b-instruct', 'mistralai/mistral-large-2-instruct']},
   openai: {label: 'OpenAI', format: 'openai', base: 'https://api.openai.com/v1', models: ['gpt-4.1-mini', 'gpt-4.1', 'gpt-4o-mini', 'gpt-4o'], keyHint: 'sk-…', browser: true, maxField: 'max_completion_tokens'},
   groq: {label: 'Groq', format: 'openai', base: 'https://api.groq.com/openai/v1', models: ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'], keyHint: 'gsk_…', browser: true},
   openrouter: {label: 'OpenRouter (many models)', format: 'openai', base: 'https://openrouter.ai/api/v1', models: ['meta-llama/llama-3.3-70b-instruct', 'openai/gpt-4o-mini', 'google/gemini-2.5-flash', 'mistralai/mistral-large'], keyHint: 'sk-or-…', browser: true},
@@ -1488,6 +1488,7 @@ try {
     if (saved.proxyUrl) LLM.proxyUrl = saved.proxyUrl;
     Object.entries(saved.cfg || {}).forEach(([id, c]) => { if (LLM.cfg[id]) Object.assign(LLM.cfg[id], c); });
     LLM.remember = Object.values(saved.cfg || {}).some(c => c.key);
+    Object.entries(PROVIDERS).forEach(([id, pv]) => { if (pv.retired && pv.retired.includes(LLM.cfg[id].model)) LLM.cfg[id].model = pv.models[0]; });
   }
 } catch (e) {}
 const activeLLM = () => ({id: LLM.provider, ...PROVIDERS[LLM.provider], ...LLM.cfg[LLM.provider]});
@@ -1617,7 +1618,7 @@ function endpoint(a, path) {
 }
 async function postJSON(a, url, headers, body) {
   let res;
-  try { res = await fetch(url, {method: 'POST', headers, body: JSON.stringify(body)}); }
+  try { res = await fetch(url, body === undefined ? {method: 'GET', headers} : {method: 'POST', headers, body: JSON.stringify(body)}); }
   catch (e) {
     if (a.proxy) throw new Error(`Could not reach the local proxy at ${LLM.proxyUrl}. Start it with: node tools/llm-proxy.mjs`);
     if (a.id === 'ollama') throw new Error('Could not reach Ollama. Start it with OLLAMA_ORIGINS="*" ollama serve, and pull the model first (ollama pull ' + a.model + ').');
@@ -1629,7 +1630,8 @@ async function postJSON(a, url, headers, body) {
     const msg = typeof raw === 'string' ? raw : JSON.stringify(raw);
     const err = new Error(
       res.status === 401 || res.status === 403 ? `${a.label} rejected the API key (${res.status}). Check it in Live LLM settings.` :
-      res.status === 404 ? `${a.label} returned 404: check the model id "${a.model}" and the base URL. (${msg})` :
+      res.status === 404 ? `${a.label} returned 404: check the model id "${a.model}" and the base URL. Click “Load models” to see what is available. (${msg})` :
+      res.status === 410 ? `The model "${a.model}" has been retired by ${a.label}. Click “Load models” in Live LLM settings and pick a current one. (${msg})` :
       res.status === 429 ? 'Rate limit or quota reached (429). Wait a moment and ask again.' :
       res.status >= 500 ? `${a.label} is busy or unavailable (${res.status}). Try again shortly.` :
       `${a.label} error ${res.status}: ${msg}`);
@@ -1762,6 +1764,20 @@ function mdLite(s) {
   return out.map(x => Array.isArray(x) ? '<ul>' + x.map(i => `<li>${i}</li>`).join('') + '</ul>' : x).join('');
 }
 
+// Fetch the provider's live model list (GET /models), so model names never go stale.
+const NON_CHAT = /embed|rerank|retriev|guard|safety|reward|clip|ocr|parse|asr|tts|speech|whisper|dall-e|image|moderation|audio|transcrib|nv-yolox|paddle|deplot|kosmos|fuyu|neva|vila|cosmos|flux|sdxl|stable-diffusion|bge|e5-|arctic-embed|riva/i;
+async function loadModels() {
+  const a = activeLLM();
+  if (!a.base) throw new Error('Enter the base URL first.');
+  const headers = a.format === 'anthropic'
+    ? {'x-api-key': a.key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true'}
+    : (a.key ? {authorization: 'Bearer ' + a.key} : {});
+  const data = await postJSON(a, endpoint(a, a.format === 'anthropic' ? '/models?limit=100' : '/models'), headers);
+  const ids = (data.data || data.models || []).map(m => m.id || m.name).filter(Boolean).map(id => id.replace(/^models\//, ''));
+  const chat = ids.filter(id => !NON_CHAT.test(id)).sort();
+  return chat.length ? chat : ids.sort();
+}
+
 function chatHTML(t) {
   const chat = getChat(t.id), live = llmLive(), a = activeLLM();
   const chips = ['How can I improve my last run?', 'Explain the trade-off in the recommendation', 'Stress-test my plan: what if conditions get worse?', 'Which concept should I learn from this?'];
@@ -1780,7 +1796,9 @@ function chatHTML(t) {
     <div style="display:flex;gap:10px;align-items:center;margin-top:4px">${chat.view.length ? '<button class="btn ghost small" id="chatClear">Clear chat</button>' : ''}<span class="small muted" style="margin-left:auto">Enter to send · Shift+Enter for a new line</span></div>
     <details class="llm-set" id="llmSet" ${LLM.settingsOpen ? 'open' : ''}><summary>Live LLM settings</summary>
       <div class="row2"><select id="llmProvider" aria-label="Provider">${provOpts}</select></div>
-      <div class="row2"><input id="llmModel" list="llmModels" placeholder="Model id" value="${esc(a.model)}" aria-label="Model id" style="flex:1;min-width:150px;border:1px solid var(--line);background:var(--panel-2);color:var(--ink);border-radius:7px;padding:5px 7px;font:inherit;font-size:12.5px"><datalist id="llmModels">${a.models.map(m => `<option value="${esc(m)}">`).join('')}</datalist></div>
+      <div class="row2"><input id="llmModel" list="llmModels" placeholder="Model id" value="${esc(a.model)}" aria-label="Model id" style="flex:1;min-width:150px;border:1px solid var(--line);background:var(--panel-2);color:var(--ink);border-radius:7px;padding:5px 7px;font:inherit;font-size:12.5px"><datalist id="llmModels">${(a.liveModels || a.models).map(m => `<option value="${esc(m)}">`).join('')}</datalist><button class="btn small" id="llmLoad" title="Fetch the current model list from the provider (uses the key and proxy settings)">Load models</button></div>
+      ${a.liveModels ? `<div class="row2"><select id="llmPick" aria-label="Available models"><option value="">${a.liveModels.length} models available: pick one…</option>${a.liveModels.map(m => `<option value="${esc(m)}" ${m === a.model ? 'selected' : ''}>${esc(m)}</option>`).join('')}</select></div>` : ''}
+      ${LLM.modelMsg ? `<div class="small ${LLM.modelMsg.err ? 'down' : 'muted'}" style="margin-top:4px">${esc(LLM.modelMsg.text)}</div>` : ''}
       <div class="row2"><input type="password" id="llmKey" placeholder="${esc(a.noKey ? 'No key needed' : a.keyHint || 'API key')}" value="${esc(a.key)}" autocomplete="off" aria-label="API key" ${a.noKey ? 'disabled' : ''}></div>
       <div class="row2"><input id="llmBase" placeholder="Base URL, e.g. https://host/v1" value="${esc(a.base)}" aria-label="Base URL" style="flex:1;min-width:150px;border:1px solid var(--line);background:var(--panel-2);color:var(--ink);border-radius:7px;padding:5px 7px;font:inherit;font-size:12px"></div>
       <div class="row2"><label class="small"><input type="checkbox" id="llmProxy" ${a.proxy ? 'checked' : ''}> Use local proxy (${esc(LLM.proxyUrl)})</label></div>
@@ -1806,12 +1824,23 @@ function bindChat(t) {
     const rb = $('#runBtn'); if (rb) { rb.focus(); rb.scrollIntoView({block: 'center', behavior: 'smooth'}); }
   });
   const readForm = () => { const c = LLM.cfg[LLM.provider]; c.model = $('#llmModel').value.trim(); c.key = $('#llmKey').value.trim(); c.base = $('#llmBase').value.trim(); c.proxy = $('#llmProxy').checked; LLM.remember = $('#llmRemember').checked; };
-  $('#llmProvider').onchange = e => { readForm(); LLM.provider = e.target.value; LLM.settingsOpen = true; renderAI(t); };
+  $('#llmProvider').onchange = e => { readForm(); LLM.provider = e.target.value; LLM.modelMsg = null; LLM.settingsOpen = true; renderAI(t); };
   $('#llmSave').onclick = () => {
     readForm(); saveLLM();
     logActivity(t, llmLive() ? `Live LLM enabled (${activeLLM().label} · ${activeLLM().model})` : 'Live LLM settings saved (not connected)');
     LLM.settingsOpen = !llmLive(); renderAI(t);
   };
+  $('#llmLoad').onclick = async () => {
+    readForm(); const c = LLM.cfg[LLM.provider];
+    LLM.modelMsg = {text: 'Loading models…'}; LLM.settingsOpen = true; renderAI(t);
+    try {
+      c.liveModels = await loadModels();
+      LLM.modelMsg = {text: `Loaded ${c.liveModels.length} models. Pick one, then Save. Larger instruct/chat models handle tool calling best.`};
+      if (c.liveModels.length && !c.liveModels.includes(c.model)) LLM.modelMsg.text += ` Your current model “${c.model}” is not in the list.`;
+    } catch (e) { LLM.modelMsg = {text: e.message, err: true}; }
+    renderAI(t);
+  };
+  const pick = $('#llmPick'); if (pick) pick.onchange = () => { if (pick.value) $('#llmModel').value = pick.value; };
   const fg = $('#llmForget'); if (fg) fg.onclick = () => { LLM.cfg[LLM.provider].key = ''; saveLLM(); logActivity(t, 'API key removed'); renderAI(t); };
 }
 

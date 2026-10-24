@@ -22,7 +22,7 @@ const ALLOWED = new Set([
 const FORWARD_HEADERS = ['content-type', 'authorization', 'x-api-key', 'anthropic-version', 'anthropic-beta', 'http-referer', 'x-title', 'accept'];
 const cors = {
   'access-control-allow-origin': '*',
-  'access-control-allow-methods': 'POST, OPTIONS',
+  'access-control-allow-methods': 'GET, POST, OPTIONS',
   'access-control-allow-headers': FORWARD_HEADERS.join(', ') + ', anthropic-dangerous-direct-browser-access',
   'access-control-max-age': '600'
 };
@@ -30,13 +30,13 @@ const cors = {
 http.createServer(async (req, res) => {
   if (req.method === 'OPTIONS') { res.writeHead(204, cors); return res.end(); }
   const m = req.url.match(/^\/(https?)\/([^/]+)(\/.*)$/);
-  if (req.method !== 'POST' || !m) { res.writeHead(404, {...cors, 'content-type': 'application/json'}); return res.end(JSON.stringify({error: {message: 'Use POST /https/<host>/<path>'}})); }
+  if (!['GET', 'POST'].includes(req.method) || !m) { res.writeHead(404, {...cors, 'content-type': 'application/json'}); return res.end(JSON.stringify({error: {message: 'Use GET or POST /https/<host>/<path>'}})); }
   const [, scheme, host, path] = m;
   if (!ALLOWED.has(host)) { res.writeHead(403, {...cors, 'content-type': 'application/json'}); return res.end(JSON.stringify({error: {message: `Host ${host} is not in the proxy allowlist. Start the proxy with EXTRA_HOSTS=${host}`}})); }
   const chunks = []; for await (const c of req) chunks.push(c);
   const headers = {}; for (const h of FORWARD_HEADERS) if (req.headers[h]) headers[h] = req.headers[h];
   try {
-    const up = await fetch(`${scheme}://${host}${path}`, {method: 'POST', headers, body: Buffer.concat(chunks)});
+    const up = await fetch(`${scheme}://${host}${path}`, req.method === 'GET' ? {method: 'GET', headers} : {method: 'POST', headers, body: Buffer.concat(chunks)});
     const body = Buffer.from(await up.arrayBuffer());
     res.writeHead(up.status, {...cors, 'content-type': up.headers.get('content-type') || 'application/json'});
     res.end(body);

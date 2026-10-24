@@ -25,12 +25,12 @@ The **Ask the AI agent** box lets students ask for suggestions in plain language
 | Provider | API format | Direct from browser? |
 |---|---|---|
 | Anthropic Claude (default `claude-opus-5-5`) | Claude Messages API | yes |
-| **NVIDIA NIM** (build.nvidia.com, e.g. `meta/llama-3.3-70b-instruct`) | OpenAI-compatible | no, use the local proxy (below) |
+| **NVIDIA NIM** (build.nvidia.com, e.g. `nvidia/nemotron-3.5-super-vl-120b-a12b`) | OpenAI-compatible | no, use the local proxy (below) |
 | OpenAI, Groq, OpenRouter, Google Gemini | OpenAI-compatible | usually yes; use the proxy if the browser is blocked |
 | Ollama (local, free, no key) | OpenAI-compatible | yes, start with `OLLAMA_ORIGINS="*" ollama serve` |
 | Any other OpenAI-compatible endpoint (vLLM, self-hosted NIM, Together, Mistral…) | OpenAI-compatible | set the base URL |
 
-Model names are suggestions; type any model id your provider offers.
+Model names change often (providers retire models). Click **Load models** to fetch the provider's current list, then pick one, or type any model id.
 
 The agent runs a tool-calling loop over four tools that call the real simulation engine:
 

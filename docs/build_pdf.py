@@ -109,7 +109,7 @@ s += [P('Optional live AI agent (LLM chat)', 'h2'),
       P('The <b>Ask the AI agent</b> chat box adds a live LLM agent that works with many providers. It answers free-form questions such as “Should I add a machine at B?” or “What if demand rises 30%?” with a tool-calling loop of up to 8 steps. No backend is needed.'),
       table([['Provider', 'API format', 'Notes'],
              ['Anthropic Claude', 'Claude Messages API', 'Default claude-opus-5-5; direct from browser'],
-             ['NVIDIA NIM (build.nvidia.com)', 'OpenAI-compatible', 'e.g. meta/llama-3.3-70b-instruct; needs the local proxy (CORS)'],
+             ['NVIDIA NIM (build.nvidia.com)', 'OpenAI-compatible', 'e.g. nvidia/nemotron-3.5-super-vl-120b-a12b; needs the local proxy (CORS)'],
              ['OpenAI, Groq, OpenRouter, Google Gemini', 'OpenAI-compatible', 'Usually direct; use the proxy if the browser is blocked'],
              ['Ollama (local)', 'OpenAI-compatible', 'Free, no key; start with OLLAMA_ORIGINS="*" ollama serve'],
              ['Any other endpoint', 'OpenAI-compatible', 'vLLM, self-hosted NIM, Together, Mistral…: set the base URL']], [W * 0.3, W * 0.22, W * 0.48]),
@@ -137,7 +137,7 @@ s += bullets(['Open <b>opslab.html</b> in Chrome, Edge, Firefox or Safari. It al
               'Press <b>Run simulation</b>. Read the KPI cards (▲/▼ vs the previous run), the chart and the before/after table.',
               'Read the agent’s report on the right. Press <b>Get AI advice</b> for the alternatives table, or <b>Apply recommendation</b> and then <b>Run again</b>.',
               '<b>Reset topic</b> restores defaults and clears that topic’s history. <b>Reset all</b> clears the whole session.',
-              'Optional: open <b>Live LLM settings</b> in the <i>Ask the AI agent</i> box, choose a provider (Claude, NVIDIA, OpenAI, Groq, OpenRouter, Gemini, Ollama, or custom), enter the model and key, and ask questions in plain language. For NVIDIA, first run <b>node tools/llm-proxy.mjs</b> and keep “Use local proxy” ticked. Without an LLM the rule-based agent answers.',
+              'Optional: open <b>Live LLM settings</b> in the <i>Ask the AI agent</i> box, choose a provider (Claude, NVIDIA, OpenAI, Groq, OpenRouter, Gemini, Ollama, or custom), enter the key, click <b>Load models</b> to pick a current model, and ask questions in plain language. For NVIDIA, first run <b>node tools/llm-proxy.mjs</b> and keep “Use local proxy” ticked. Without an LLM the rule-based agent answers.',
               'Open <b>Session report</b> at the end and use <b>Print / save as PDF</b>.'])
 
 s += [P('7. Instructor guide', 'h1'), P('Learning objectives', 'h2')]

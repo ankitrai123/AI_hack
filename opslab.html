@@ -364,6 +364,54 @@ function normInv(p) {
 function range(a, b, step) { const out = []; for (let x = a; x <= b + 1e-9; x += step) out.push(round(x, 6)); return out; }
 
 /* ---------------- 2. Topic models ---------------- */
+/* ---- Data and helpers for topics 8–11 ---- */
+// 8. Newsvendor: 1,000 simulated seasons per demand scenario; contract terms as the retailer sees them.
+const NV_N = 1000, NV_NAMES = {wholesale: 'Wholesale-price contract', buyback: 'Buyback contract', revshare: 'Revenue-sharing contract'};
+let NV_CACHE = {};
+function nvDemand(p) {
+  const k = `${p.mu}|${p.sd}|${p.seed}`;
+  if (!NV_CACHE[k]) { if (Object.keys(NV_CACHE).length > 40) NV_CACHE = {}; NV_CACHE[k] = stdNormals(31000 + p.seed * 7919, NV_N).map(x => Math.max(0, Math.round(p.mu + p.sd * x))); }
+  return NV_CACHE[k];
+}
+function nvTerms(p, k = p.contract) {
+  if (k === 'buyback') return {w: p.wb, back: p.b, keep: 1};
+  if (k === 'revshare') return {w: p.wr, back: p.v, keep: p.phi / 100};
+  return {w: p.w, back: p.v, keep: 1};
+}
+function nvCR(p, k = p.contract) { const t = nvTerms(p, k), cu = t.keep * p.p - t.w, co = t.w - t.back; return cu <= 0 ? 0 : co <= 0 ? 1 : cu / (cu + co); }
+function nvEval(p, D, Q, k = p.contract) {
+  const t = nvTerms(p, k); let sales = 0, left = 0, rp = 0, rp2 = 0, sp = 0, ch = 0, neg = 0;
+  for (const d of D) {
+    const s = Math.min(Q, d), l = Q - s, r = t.keep * p.p * s + t.back * l - t.w * Q;
+    sales += s; left += l; rp += r; rp2 += r * r; if (r < 0) neg++;
+    sp += (t.w - p.c) * Q + (1 - t.keep) * p.p * s - (t.back - p.v) * l;
+    ch += p.p * s + p.v * l - p.c * Q;
+  }
+  const n = D.length, m = rp / n;
+  return {profit: m, sd: Math.sqrt(Math.max(0, rp2 / n - m * m)), supplier: sp / n, chain: ch / n, sales: sales / n, left: left / n, ploss: neg / n};
+}
+function nvQuantile(D, cr) { const s = D.slice().sort((a, b) => a - b); return s[clamp(Math.ceil(cr * s.length) - 1, 0, s.length - 1)]; }
+// 9. Bullwhip: a four-stage chain facing one customer-demand stream with a step change in week 11.
+const BW_STAGES = ['Retailer', 'Wholesaler', 'Distributor', 'Factory'];
+function bwDemand(p) { return stdNormals(41000 + p.seed * 7919, 52).map((x, t) => Math.max(0, Math.round(p.base * (t >= 10 ? 1 + p.step / 100 : 1) + p.noise * x))); }
+// 10. Aggregate planning: monthly seasonal index (averages 1).
+const APP_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const APP_SEASON = [0.80, 0.75, 0.85, 0.95, 1.05, 1.15, 1.10, 1.00, 1.05, 1.20, 1.25, 0.85];
+function appDemand(p) { return APP_SEASON.map(s => Math.round(p.base * (1 + (s - 1) * p.amp / 25) / 10) * 10); }
+// 11. Network design: plant in Pune, six candidate DCs (fixed cost in $ thousand a year), twelve demand regions (thousand units a year).
+const NET_PLANT = {name: 'Pune plant', lat: 18.52, lon: 73.86};
+const NET_DCS = [
+  {id: 'DEL', name: 'Delhi', lat: 28.61, lon: 77.21, f: 420}, {id: 'BOM', name: 'Mumbai', lat: 19.08, lon: 72.88, f: 480},
+  {id: 'CCU', name: 'Kolkata', lat: 22.57, lon: 88.36, f: 330}, {id: 'MAA', name: 'Chennai', lat: 13.08, lon: 80.27, f: 360},
+  {id: 'NAG', name: 'Nagpur', lat: 21.15, lon: 79.09, f: 260}, {id: 'HYD', name: 'Hyderabad', lat: 17.39, lon: 78.49, f: 320}];
+const NET_REG = [
+  {name: 'Delhi NCR', lat: 28.61, lon: 77.21, d: 180}, {name: 'Punjab & Chandigarh', lat: 30.73, lon: 76.78, d: 70}, {name: 'Lucknow & east UP', lat: 26.85, lon: 80.95, d: 120},
+  {name: 'Mumbai', lat: 19.08, lon: 72.88, d: 170}, {name: 'Ahmedabad', lat: 23.02, lon: 72.57, d: 90}, {name: 'Pune', lat: 18.52, lon: 73.86, d: 80},
+  {name: 'Kolkata', lat: 22.57, lon: 88.36, d: 110}, {name: 'Guwahati', lat: 26.14, lon: 91.74, d: 40}, {name: 'Bengaluru', lat: 12.97, lon: 77.59, d: 150},
+  {name: 'Chennai', lat: 13.08, lon: 80.27, d: 110}, {name: 'Hyderabad', lat: 17.39, lon: 78.49, d: 100}, {name: 'Indore & Bhopal', lat: 22.72, lon: 75.86, d: 60}];
+// Road distance ≈ great-circle distance × 1.3, at least 30 km for local delivery.
+function netKm(a, b) { const R = 6371, r = Math.PI / 180, dLat = (b.lat - a.lat) * r, dLon = (b.lon - a.lon) * r, h = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * r) * Math.cos(b.lat * r) * Math.sin(dLon / 2) ** 2; return Math.max(30, Math.round(2 * R * Math.asin(Math.sqrt(h)) * 1.3 / 10) * 10); }
+
 const STATIONS = ['A · Cutting', 'B · Assembly', 'C · Packing'];
 
 const TOPICS = [
@@ -1182,7 +1230,442 @@ const TOPICS = [
     return legend(stacks.map(s => [s[0], s[1]])) + stackedBars({categories: ['You', 'AI recommendation'], stacks: stacks.map(s => ({name: s[0], color: s[1], values: [h(r.parts[s[2]]), h(b.parts[s[2]])]})), fmt: v => F.n1(v) + ' h', axis: v => shortNum(v) + ' h', label: 'Lead time breakdown'});
   },
   chartTitle: 'Where the lead time goes (hours per unit)'
+},
+
+/* ===== 8. Newsvendor & Supply Contracts ===== */
+{
+  id: 'contracts', num: 8, name: 'Newsvendor & Supply Contracts', short: 'Contracts',
+  role: 'You are the buyer for a seasonal product that must be ordered once, before the season starts. Demand is uncertain, unsold units are cleared at a salvage price, and the supplier offers three contracts. Choose the contract and the order quantity that maximise your expected profit.',
+  concept: `<p>The <b>newsvendor model</b> balances the cost of ordering one unit too many (overage cost Co: purchase cost − salvage value) against the cost of ordering one unit too few (underage cost Cu: the margin lost on a missed sale). The best order is the demand quantile at the <b>critical ratio</b> Cu ÷ (Cu + Co): order above the mean when a missed sale hurts more than a leftover.</p>
+  <p>Under a plain <b>wholesale-price</b> contract the retailer carries all the leftover risk, so it orders less than the supply chain as a whole would want (<b>double marginalisation</b>). <b>Buyback</b> (the supplier refunds unsold units) and <b>revenue-sharing</b> (a low wholesale price in exchange for a share of revenue) contracts share that risk, raise the retailer's critical ratio, and can increase the profit of both firms. Expected profits are averages over 1,000 simulated seasons drawn from the demand forecast.</p>`,
+  formulas: [
+    ['Underage and overage cost', 'Cu = price − purchase cost,  Co = purchase cost − salvage'],
+    ['Critical ratio', 'CR = Cu ÷ (Cu + Co)'],
+    ['Optimal order (normal demand)', 'Q* = μ + z·σ,  z = Φ⁻¹(CR)'],
+    ['Buyback contract', 'Cu = p − w_b,  Co = w_b − b'],
+    ['Revenue sharing (retailer keeps φ)', 'Cu = φ·p − w_r,  Co = w_r − v'],
+    ['Supply-chain optimum', 'CR = (p − c) ÷ (p − v)'],
+    ['Expected profit', 'E[ revenue from sales + salvage or refunds − purchase cost ]'],
+    ['Supply-chain efficiency', 'chain profit ÷ chain profit at its own optimum']
+  ],
+  params: [
+    {id: 'contract', label: 'Contract', role: 'decision', type: 'select', def: 'wholesale', options: [['wholesale', 'Wholesale price'], ['buyback', 'Buyback'], ['revshare', 'Revenue sharing']], help: 'The terms of each contract are scenario inputs below.'},
+    {id: 'Q', label: 'Order quantity (Q)', unit: 'units', role: 'decision', min: 0, max: 4000, step: 10, def: 1000},
+    {id: 'mu', label: 'Forecast mean demand', unit: 'units/season', role: 'scenario', min: 200, max: 3000, step: 50, def: 1000},
+    {id: 'sd', label: 'Forecast std. deviation', unit: 'units', role: 'scenario', min: 0, max: 1000, step: 10, def: 300},
+    {id: 'p', label: 'Retail price', unit: '$/unit', role: 'scenario', min: 10, max: 500, step: 5, def: 120},
+    {id: 'v', label: 'Salvage value of leftovers', unit: '$/unit', role: 'scenario', min: 0, max: 200, step: 5, def: 20},
+    {id: 'c', label: "Supplier's production cost", unit: '$/unit', role: 'scenario', min: 5, max: 300, step: 5, def: 30},
+    {id: 'w', label: 'Wholesale contract: price', unit: '$/unit', role: 'scenario', min: 5, max: 400, step: 5, def: 75},
+    {id: 'wb', label: 'Buyback contract: price', unit: '$/unit', role: 'scenario', min: 5, max: 400, step: 5, def: 80},
+    {id: 'b', label: 'Buyback contract: refund per unsold unit', unit: '$/unit', role: 'scenario', min: 0, max: 400, step: 5, def: 55},
+    {id: 'wr', label: 'Revenue sharing: price', unit: '$/unit', role: 'scenario', min: 5, max: 400, step: 5, def: 35},
+    {id: 'phi', label: 'Revenue sharing: share of revenue you keep', unit: '%', role: 'scenario', min: 30, max: 100, step: 5, def: 70},
+    {id: 'seed', label: 'Demand scenario', role: 'scenario', type: 'select', def: 1, options: [[1, 'Scenario 1'], [2, 'Scenario 2'], [3, 'Scenario 3'], [4, 'Scenario 4'], [5, 'Scenario 5']], help: 'Each scenario is a different fixed set of 1,000 simulated seasons.'}
+  ],
+  objective: {key: 'profit', dir: 'max'},
+  kpis: [
+    {key: 'profit', label: 'Your expected profit', fmt: 'money', better: 'high', primary: true},
+    {key: 'fill', label: 'Expected fill rate', fmt: 'pct', better: 'high'},
+    {key: 'left', label: 'Expected leftover units', fmt: 'n1', better: 'low'},
+    {key: 'lost', label: 'Expected lost sales (units)', fmt: 'n1', better: 'low'},
+    {key: 'ploss', label: 'Chance of a losing season', fmt: 'pct', better: 'low'},
+    {key: 'supplier', label: "Supplier's expected profit", fmt: 'money', better: 'high'},
+    {key: 'chain', label: 'Supply-chain expected profit', fmt: 'money', better: 'high'},
+    {key: 'eff', label: 'Supply-chain efficiency', fmt: 'pct', better: 'high'}
+  ],
+  simulate(p) {
+    const D = nvDemand(p), e = nvEval(p, D, p.Q), cr = nvCR(p), qStar = nvQuantile(D, cr);
+    const crC = p.p > p.v ? clamp((p.p - p.c) / (p.p - p.v), 0, 1) : 0, qC = nvQuantile(D, crC), chainMax = nvEval(p, D, qC).chain, md = sum(D) / D.length;
+    return {...e, cr, qStar, crC, qC, chainMax, eff: chainMax > 0 ? e.chain / chainMax : 0, fill: md ? e.sales / md : 1, lost: md - e.sales, cfg: {...p}};
+  },
+  alternatives(p) {
+    const D = nvDemand(p), q = k => clamp(Math.round(nvQuantile(D, nvCR(p, k)) / 10) * 10, 0, 4000);
+    return [
+      ...Object.keys(NV_NAMES).map(k => ({name: `Critical ratio: ${NV_NAMES[k].toLowerCase()}`, why: `CR = ${F.pct(nvCR(p, k))} → order the ${F.pct(nvCR(p, k))} demand quantile`, p: {...p, contract: k, Q: q(k)}})),
+      {name: 'Order the mean forecast', why: 'Q = μ, ignoring the cost asymmetry', p: {...p, Q: clamp(Math.round(p.mu / 10) * 10, 0, 4000)}}
+    ];
+  },
+  search(p) {
+    const D = nvDemand(p), hi = Math.min(4000, Math.ceil(Math.max(...D) / 10) * 10);
+    let best = null, n = 0;
+    for (const contract of Object.keys(NV_NAMES)) for (let Q = 0; Q <= hi; Q += 10) { n++; const v = nvEval(p, D, Q, contract).profit; if (!best || v > best.v + 1e-9) best = {v, p: {...p, contract, Q}}; }
+    return {name: 'Optimizer: every contract × order quantity', why: `${n} (contract, Q) pairs evaluated on the same 1,000 simulated seasons`, p: best.p, n};
+  },
+  describe: p => `${NV_NAMES[p.contract]}, Q = ${p.Q}`,
+  diagnose(p, r) {
+    const out = [], D = nvDemand(p), gap = p.Q - r.qStar, band = Math.max(30, 0.25 * p.sd), t = nvTerms(p);
+    if (gap > band) out.push({sev: 'med', code: 'overorder', title: 'Order above the critical-ratio quantity', text: `Under the ${NV_NAMES[p.contract].toLowerCase()} your critical ratio is ${F.pct(r.cr)} (Cu ${F.money2(t.keep * p.p - t.w)}, Co ${F.money2(t.w - t.back)}), so the best order is about ${F.int(r.qStar)} units. You ordered ${F.int(p.Q)}: on average ${F.n1(r.left)} units are left over.`});
+    if (gap < -band) out.push({sev: 'med', code: 'underorder', title: 'Order below the critical-ratio quantity', text: `Under the ${NV_NAMES[p.contract].toLowerCase()} your critical ratio is ${F.pct(r.cr)}, so the best order is about ${F.int(r.qStar)} units. You ordered ${F.int(p.Q)} and miss ${F.n1(r.lost)} sales per season on average.`});
+    const opts = Object.keys(NV_NAMES).map(k => { const Q = nvQuantile(D, nvCR(p, k)); return {k, Q, v: nvEval(p, D, Q, k).profit}; }).sort((a, b) => b.v - a.v);
+    const own = opts.find(o => o.k === p.contract);
+    if (opts[0].k !== p.contract && opts[0].v > own.v * 1.01 + 1) out.push({sev: 'high', code: 'contract', title: 'A better contract was on the table', text: `At its own best order (${F.int(opts[0].Q)} units) the ${NV_NAMES[opts[0].k].toLowerCase()} gives you ${F.money(opts[0].v)} expected profit, against ${F.money(own.v)} for the ${NV_NAMES[p.contract].toLowerCase()} at its best order.`});
+    if (r.eff < 0.93) out.push({sev: 'med', code: 'doublemarg', title: 'Double marginalisation', text: `The supply chain earns ${F.money(r.chain)} of a possible ${F.money(r.chainMax)} (${F.pct(r.eff)}). At the integrated critical ratio of ${F.pct(r.crC)} the chain would stock about ${F.int(r.qC)} units.`});
+    if (r.ploss > 0.15) out.push({sev: 'med', code: 'risk', title: 'High chance of a losing season', text: `${F.pct(r.ploss)} of the simulated seasons lose money for you (profit std. deviation ${F.money(r.sd)}).`});
+    if (!out.some(i => i.sev !== 'ok')) out.push({sev: 'ok', code: 'balanced', title: 'Well-judged order', text: `Your order is close to the critical-ratio quantity of the best contract. Expected profit ${F.money(r.profit)}.`});
+    return out;
+  },
+  lessons: {
+    overorder: 'Order only while the chance of selling the next unit × underage cost exceeds the chance of not selling it × overage cost. Beyond the critical-ratio quantile, extra units lose money on average.',
+    underorder: 'When a missed sale costs more than a leftover, the critical ratio is above 50% and you should order more than the mean forecast.',
+    contract: 'Compare contracts at their own best order quantity: a higher wholesale price can still be the better deal when the supplier shares the leftover risk.',
+    doublemarg: 'With a wholesale-price contract the retailer bears all leftover risk and orders less than the supply-chain optimum (double marginalisation). Buyback and revenue sharing restore the incentive to stock.',
+    risk: 'Expected profit hides risk. Check how often a season loses money before ordering aggressively.',
+    balanced: 'The newsvendor rule: order the demand quantile at the critical ratio Cu ÷ (Cu + Co).'
+  },
+  explain(p, r, b) {
+    const t = nvTerms(b.p);
+    return `The recommendation is the <b>${NV_NAMES[b.p.contract].toLowerCase()} with an order of ${F.int(b.p.Q)} units</b>. Under it your underage cost is ${F.money2(t.keep * b.p.p - t.w)} and your overage cost ${F.money2(t.w - t.back)}, a critical ratio of ${F.pct(b.r.cr)}, so the best order sits near the ${F.pct(b.r.cr)} quantile of demand. Your expected profit is ${F.money(b.r.profit)} against ${F.money(r.profit)}. The supplier earns ${F.money(b.r.supplier)} and the whole chain ${F.money(b.r.chain)} (${F.pct(b.r.eff)} of the integrated optimum, which stocks about ${F.int(b.r.qC)} units).`;
+  },
+  chart(r, b) {
+    const p = r.cfg, D = nvDemand(p), hi = Math.max(r.cfg.Q, b.cfg.Q, Math.ceil((p.mu + 3 * p.sd) / 50) * 50), x = [];
+    for (let Q = 0; Q <= hi; Q += Math.max(10, Math.round(hi / 60 / 10) * 10)) x.push(Q);
+    const curve = k => x.map(Q => nvEval(p, D, Q, k).profit), chain = x.map(Q => nvEval(p, D, Q).chain);
+    const series = [{name: `You: ${NV_NAMES[p.contract]}`, color: 'var(--you)', values: curve(p.contract)}];
+    if (b.cfg.contract !== p.contract) series.push({name: `AI: ${NV_NAMES[b.cfg.contract]}`, color: 'var(--ai)', values: curve(b.cfg.contract)});
+    series.push({name: 'Whole supply chain', color: 'var(--s3)', values: chain});
+    return legend(series.map(s => [s.name, s.color, 'line'])) + lineChart({x, series, xLabel: 'Order quantity Q', yLabel: 'Expected profit ($)', autoY: true, callouts: [{x: r.cfg.Q, label: 'You'}, {x: b.cfg.Q, label: 'AI'}, {x: r.qC, label: 'Chain optimum'}]});
+  },
+  chartTitle: 'Expected profit by order quantity (your contract, the recommended contract and the whole chain)'
+},
+
+/* ===== 9. Bullwhip Effect ===== */
+{
+  id: 'bullwhip', num: 9, name: 'Bullwhip Effect (Beer Game)', short: 'Bullwhip',
+  role: 'You coordinate a four-stage supply chain: retailer, wholesaler, distributor and factory. Each stage forecasts its demand and orders from the stage above with a delivery lead time. Set the ordering policy every stage follows, and decide whether to share point-of-sale data and pay for faster deliveries, to minimise the chain\'s total holding and backorder cost over 52 weeks.',
+  concept: `<p>The <b>bullwhip effect</b> is the growth of order variability as orders move up a supply chain. A small change in customer demand becomes a large swing in factory orders. Its causes are <b>demand-signal processing</b> (each stage forecasts from the orders it receives and over-reacts to changes), long <b>lead times</b> (bigger pipeline and safety-stock corrections), order batching, and price promotions.</p>
+  <p>Each stage uses an order-up-to policy: it forecasts demand by exponential smoothing (α), sets a target inventory position of forecast × (lead time + safety weeks), and orders the forecast plus a fraction β of the gap between target and inventory position. A smaller β smooths orders. <b>Sharing point-of-sale data</b> lets every stage forecast from real customer demand, and a <b>shorter lead time</b> shrinks the pipeline that has to be corrected.</p>`,
+  formulas: [
+    ['Forecast (exponential smoothing)', 'Fₜ = α·demandₜ + (1 − α)·Fₜ₋₁'],
+    ['Target inventory position', 'S = F × (L + safety weeks)'],
+    ['Inventory position', 'IP = on hand − backorders + in transit + owed by the supplier'],
+    ['Order (smoothed order-up-to)', 'order = max(0, F + β·(S − IP))'],
+    ['Bullwhip ratio', 'Var(factory orders) ÷ Var(customer demand)'],
+    ['Weekly cost', 'Σ stages: holding × on hand + backorder cost × backorders']
+  ],
+  params: [
+    {id: 'alpha', label: 'Forecast smoothing (α)', role: 'decision', min: 0.05, max: 1, step: 0.05, def: 0.3, help: 'High α reacts quickly to the latest demand; low α smooths noise.'},
+    {id: 'beta', label: 'Order smoothing (β)', role: 'decision', min: 0.1, max: 1, step: 0.05, def: 1, help: 'Share of the inventory gap ordered each week. β = 1 is the textbook order-up-to policy.'},
+    {id: 'ssw', label: 'Safety stock', unit: 'weeks of demand', role: 'decision', min: 0, max: 4, step: 0.5, def: 1},
+    {id: 'share', label: 'Share point-of-sale data with every stage', role: 'decision', type: 'checkbox', def: false},
+    {id: 'fast', label: 'Pay for faster deliveries (lead time − 1 week)', role: 'decision', type: 'checkbox', def: false},
+    {id: 'base', label: 'Customer demand before the change', unit: 'units/week', role: 'scenario', min: 20, max: 500, step: 10, def: 100},
+    {id: 'step', label: 'Demand change from week 11', unit: '%', role: 'scenario', min: -50, max: 100, step: 5, def: 30},
+    {id: 'noise', label: 'Demand noise (std. dev.)', unit: 'units/week', role: 'scenario', min: 0, max: 60, step: 1, def: 10},
+    {id: 'L', label: 'Delivery lead time between stages', unit: 'weeks', role: 'scenario', min: 1, max: 4, step: 1, def: 2},
+    {id: 'h', label: 'Holding cost', unit: '$/unit/week', role: 'scenario', min: 0.05, max: 5, step: 0.05, def: 0.5},
+    {id: 'bc', label: 'Backorder cost', unit: '$/unit/week', role: 'scenario', min: 0, max: 20, step: 0.5, def: 2},
+    {id: 'cShare', label: 'POS data-sharing cost', unit: '$/week', role: 'scenario', min: 0, max: 1000, step: 10, def: 60, help: 'Only matters when point-of-sale data are shared.'},
+    {id: 'cFast', label: 'Faster-delivery cost', unit: '$/week', role: 'scenario', min: 0, max: 2000, step: 10, def: 250, help: 'Only matters when you pay for faster deliveries.'},
+    {id: 'seed', label: 'Demand scenario', role: 'scenario', type: 'select', def: 1, options: [[1, 'Scenario 1'], [2, 'Scenario 2'], [3, 'Scenario 3'], [4, 'Scenario 4'], [5, 'Scenario 5']], help: 'Each scenario is a different fixed customer-demand stream.'}
+  ],
+  objective: {key: 'total', dir: 'min'},
+  kpis: [
+    {key: 'total', label: 'Total chain cost (52 weeks)', fmt: 'money', better: 'low', primary: true},
+    {key: 'bw', label: 'Bullwhip ratio (factory)', fmt: 'n2', better: 'low'},
+    {key: 'fill', label: 'Customer fill rate', fmt: 'pct', better: 'high'},
+    {key: 'avgInv', label: 'Avg chain inventory (units)', fmt: 'n1', better: null},
+    {key: 'holdCost', label: 'Holding cost', fmt: 'money', better: 'low'},
+    {key: 'backCost', label: 'Backorder cost', fmt: 'money', better: 'low'},
+    {key: 'peak', label: 'Peak factory order (units)', fmt: 'int', better: 'low'},
+    {key: 'improve', label: 'Data sharing + speed cost', fmt: 'money', better: null}
+  ],
+  simulate(p) {
+    const T = 52, L = p.fast ? Math.max(1, p.L - 1) : p.L, cust = bwDemand(p), n = BW_STAGES.length;
+    const st = BW_STAGES.map(() => ({inv: p.base * (1 + p.ssw), back: 0, f: p.base, pipe: new Array(L).fill(p.base)}));
+    const orders = BW_STAGES.map(() => []), invS = [];
+    let hold = 0, backC = 0, served = 0, invSum = 0;
+    for (let t = 0; t < T; t++) {
+      st.forEach(s => { s.inv += s.pipe.shift(); });
+      let incoming = cust[t];
+      for (let i = 0; i < n; i++) {
+        const s = st[i], prevBack = s.back, need = incoming + s.back, ship = Math.min(s.inv, need);
+        if (i === 0) served += Math.min(incoming, Math.max(0, s.inv - prevBack));
+        s.inv -= ship; s.back = need - ship;
+        if (i > 0) st[i - 1].pipe.push(ship);
+        s.f = p.alpha * (p.share ? cust[t] : incoming) + (1 - p.alpha) * s.f;
+        const target = s.f * (L + p.ssw), ip = s.inv - s.back + sum(s.pipe) + (i < n - 1 ? st[i + 1].back : 0); // on order = in transit + still owed by the supplier
+        const ord = Math.max(0, Math.round(s.f + p.beta * (target - ip)));
+        orders[i].push(ord);
+        if (i === n - 1) s.pipe.push(ord); // the factory's production arrives after the lead time
+        incoming = ord;
+        hold += p.h * s.inv; backC += p.bc * s.back;
+      }
+      const tot = sum(st.map(s => s.inv)); invS.push(tot); invSum += tot;
+    }
+    const vr = a => { const m = sum(a) / a.length; return sum(a.map(x => (x - m) ** 2)) / a.length; };
+    const vc = Math.max(1, vr(cust)), improve = T * ((p.share ? p.cShare : 0) + (p.fast ? p.cFast : 0));
+    return {cust, orders, invS, L, bw: vr(orders[n - 1]) / vc, ratios: orders.map(o => vr(o) / vc), fill: served / Math.max(1, sum(cust)), avgInv: invSum / T,
+      holdCost: hold, backCost: backC, improve, total: hold + backC + improve, peak: Math.max(...orders[n - 1])};
+  },
+  alternatives(p) {
+    return [
+      {name: 'Share point-of-sale data', why: 'Every stage forecasts from customer demand', p: {...p, share: true}},
+      {name: 'Smooth orders (β = 0.3)', why: 'Close only 30% of the inventory gap each week', p: {...p, beta: 0.3}},
+      {name: 'Slower forecast (α = 0.2)', why: 'React less to week-to-week noise', p: {...p, alpha: 0.2}},
+      {name: 'All remedies: sharing, α 0.3, β 0.4, faster deliveries', why: 'Attack every cause of the bullwhip', p: {...p, share: true, alpha: 0.3, beta: 0.4, fast: true}}
+    ];
+  },
+  search(p) {
+    let best = null, n = 0;
+    for (const share of [false, true]) for (const fast of [false, true]) for (const alpha of [0.1, 0.2, 0.3, 0.4, 0.6, 0.8, 1]) for (const beta of [0.1, 0.2, 0.3, 0.4, 0.5, 0.7, 1]) for (const ssw of [0, 0.5, 1, 1.5, 2, 3, 4]) {
+      n++; const q = {...p, share, fast, alpha, beta, ssw}, r = this.simulate(q);
+      if (!best || r.total < best.r.total - 1e-9) best = {p: q, r};
+    }
+    return {name: 'Optimizer: policy × remedies grid', why: `${n} combinations of α, β, safety stock, data sharing and faster delivery simulated on the same demand`, p: best.p, n};
+  },
+  describe: p => `α ${p.alpha}, β ${p.beta}, safety ${p.ssw} wk${p.share ? ' · POS sharing' : ''}${p.fast ? ' · faster delivery' : ''}`,
+  diagnose(p, r) {
+    const out = [];
+    if (r.bw > 2) out.push({sev: 'high', code: 'amplify', title: 'Orders amplify up the chain', text: `Factory orders vary ${F.n1(r.bw)}× as much as customer demand (retailer ${F.n1(r.ratios[0])}×, wholesaler ${F.n1(r.ratios[1])}×, distributor ${F.n1(r.ratios[2])}×). The peak factory order is ${F.int(r.peak)} units against ${F.int(Math.max(...r.cust))} at the till.`});
+    if (p.beta >= 0.8 && r.bw > 1.5) out.push({sev: 'med', code: 'overreact', title: 'Orders over-correct inventory gaps', text: `With β = ${p.beta} every stage orders the whole gap between target and inventory position at once, including stock already on its way.`});
+    if (!p.share && r.bw > 1.5) out.push({sev: 'med', code: 'noshare', title: 'Upstream stages forecast from orders, not sales', text: 'The wholesaler, distributor and factory see only the orders of the stage below, which already contain that stage\'s over-reactions.'});
+    if (r.backCost > 0.4 * r.total) out.push({sev: 'high', code: 'backlog', title: 'Backorders dominate cost', text: `Backorders cost ${F.money(r.backCost)} (${F.pct(r.backCost / r.total)} of the total); customer fill rate is ${F.pct(r.fill)}.`});
+    if (r.holdCost > 0.6 * r.total && p.ssw >= 2) out.push({sev: 'med', code: 'overstock', title: 'Too much safety stock', text: `Holding cost is ${F.money(r.holdCost)}, with ${F.n1(r.avgInv)} units in the chain on average.`});
+    if (!p.fast && p.L >= 3) out.push({sev: 'med', code: 'leadtime', title: 'Long lead times', text: `A ${p.L}-week lead time means ${p.L} weeks of orders are in the pipeline at every stage, so corrections arrive late and overshoot.`});
+    if (!out.some(i => i.sev !== 'ok')) out.push({sev: 'ok', code: 'stable', title: 'Stable chain', text: `Factory orders vary ${F.n2(r.bw)}× as much as customer demand, and ${F.pct(r.fill)} of customer demand is served from stock.`});
+    return out;
+  },
+  lessons: {
+    amplify: 'The bullwhip effect: each stage adds its own forecast and safety-stock corrections, so order variability grows at every step up the chain.',
+    overreact: 'Ordering the full inventory gap every week ignores what is already in the pipeline. Smoothing orders (β < 1) dampens the swings.',
+    noshare: 'Sharing point-of-sale data lets every stage plan from real demand instead of from distorted orders: the single most effective bullwhip remedy.',
+    backlog: 'When upstream stages swing between too much and too little, the retailer runs out exactly when demand rises.',
+    overstock: 'Safety stock protects service, but every week of it is held at four stages. Reduce variability first, then the buffer.',
+    leadtime: 'Long lead times magnify the bullwhip: the order-up-to target and the pipeline both scale with L.',
+    stable: 'A stable chain forecasts from real demand, smooths orders and keeps lead times short.'
+  },
+  explain(p, r, b) {
+    return `The recommended policy is <b>${this.describe(b.p)}</b>. Factory orders then vary ${F.n2(b.r.bw)}× as much as customer demand (yours: ${F.n2(r.bw)}×), the peak factory order is ${F.int(b.r.peak)} units (yours: ${F.int(r.peak)}), and ${F.pct(b.r.fill)} of customer demand is served from stock. Total cost is ${F.money(b.r.total)} against ${F.money(r.total)}, including ${F.money(b.r.improve)} for data sharing and faster delivery.`;
+  },
+  chart(r, b) {
+    const x = r.cust.map((_, i) => i + 1), cols = ['var(--you)', 'var(--s3)', 'var(--s4)', 'var(--ai)'];
+    const series = [{name: 'Customer demand', color: 'var(--ink)', values: r.cust}, ...BW_STAGES.map((s, i) => ({name: `Your ${s.toLowerCase()} orders`, color: cols[i], values: r.orders[i]})), {name: 'AI policy: factory orders', color: 'var(--s5)', values: b.orders[3]}];
+    return legend(series.map(s => [s.name, s.color, 'line'])) + lineChart({x, series, xLabel: 'Week', yLabel: 'Units ordered', callouts: [{x: 11, label: 'Demand change'}]});
+  },
+  chartTitle: 'Orders placed by each stage, week by week'
+},
+
+/* ===== 10. Aggregate Production Planning ===== */
+{
+  id: 'app', num: 10, name: 'Aggregate Production Planning', short: 'Aggregate plan',
+  role: 'You plan next year\'s production for a seasonal product family. Choose a strategy (level, chase or hybrid), the workforce, the overtime limit and whether to use a subcontractor, to meet the monthly demand forecast at the lowest total cost.',
+  concept: `<p><b>Aggregate planning</b> sets production, workforce and inventory for the next 6–18 months for a whole product family. The classic options are a <b>level</b> strategy (constant workforce; inventory absorbs the seasons), a <b>chase</b> strategy (hire and lay off to match demand each month) and <b>hybrid</b> plans that add overtime and subcontracting.</p>
+  <p>Level plans pay holding and backorder costs; chase plans pay hiring and layoff costs; overtime and subcontracting are flexible but cost more per unit. The cheapest plan depends on the relative costs and on how strong the seasonality is.</p>`,
+  formulas: [
+    ['Regular output', 'workers × units per worker per month'],
+    ['Net requirement', 'demandₜ + backordersₜ₋₁ − inventoryₜ₋₁'],
+    ['Inventory balance', 'Iₜ = Iₜ₋₁ + output − demand served'],
+    ['Level workforce', '≈ total demand ÷ (12 × units per worker)'],
+    ['Chase workforce', '⌈ net requirement ÷ units per worker ⌉'],
+    ['Total cost', 'wages + hiring + layoffs + overtime + subcontracting + holding + backorders']
+  ],
+  params: [
+    {id: 'strategy', label: 'Strategy', role: 'decision', type: 'select', def: 'level', options: [['level', 'Level: constant workforce'], ['chase', 'Chase: hire and lay off to match demand'], ['hybrid', 'Hybrid: constant workforce + overtime']]},
+    {id: 'W', label: 'Workforce (level and hybrid plans)', unit: 'workers', role: 'decision', min: 20, max: 400, step: 1, def: 150, showIf: p => p.strategy !== 'chase'},
+    {id: 'ot', label: 'Overtime limit (hybrid plan)', unit: '% of regular output', role: 'decision', min: 0, max: 40, step: 5, def: 20, showIf: p => p.strategy === 'hybrid'},
+    {id: 'sub', label: 'Use a subcontractor for any shortfall', role: 'decision', type: 'checkbox', def: false},
+    {id: 'base', label: 'Average monthly demand', unit: 'units/month', role: 'scenario', min: 1000, max: 10000, step: 100, def: 4000},
+    {id: 'amp', label: 'Seasonality strength', unit: '%', role: 'scenario', min: 0, max: 60, step: 5, def: 25, help: '25% gives the forecast in the case data; 0% means flat demand.'},
+    {id: 'rate', label: 'Output per worker', unit: 'units/month', role: 'scenario', min: 10, max: 60, step: 1, def: 25},
+    {id: 'wage', label: 'Wage', unit: '$/worker-month', role: 'scenario', min: 500, max: 6000, step: 100, def: 2000},
+    {id: 'otc', label: 'Overtime cost', unit: '$/unit', role: 'scenario', min: 20, max: 400, step: 5, def: 120, help: 'Only matters for hybrid plans, which may use overtime.'},
+    {id: 'subc', label: 'Subcontracting cost', unit: '$/unit', role: 'scenario', min: 20, max: 500, step: 5, def: 140},
+    {id: 'hire', label: 'Hiring and training cost', unit: '$/worker', role: 'scenario', min: 0, max: 10000, step: 100, def: 1500},
+    {id: 'fire', label: 'Layoff cost', unit: '$/worker', role: 'scenario', min: 0, max: 20000, step: 100, def: 2500},
+    {id: 'h', label: 'Holding cost', unit: '$/unit/month', role: 'scenario', min: 0, max: 50, step: 0.5, def: 5},
+    {id: 'bo', label: 'Backorder cost', unit: '$/unit/month', role: 'scenario', min: 0, max: 200, step: 1, def: 25},
+    {id: 'W0', label: 'Current workforce', unit: 'workers', role: 'scenario', min: 0, max: 400, step: 1, def: 155},
+    {id: 'I0', label: 'Opening inventory', unit: 'units', role: 'scenario', min: 0, max: 10000, step: 100, def: 500}
+  ],
+  objective: {key: 'total', dir: 'min'},
+  kpis: [
+    {key: 'total', label: 'Total plan cost (12 months)', fmt: 'money', better: 'low', primary: true},
+    {key: 'fill', label: 'Demand met on time', fmt: 'pct', better: 'high'},
+    {key: 'avgInv', label: 'Avg inventory (units)', fmt: 'n1', better: null},
+    {key: 'changes', label: 'Hires + layoffs (workers)', fmt: 'int', better: 'low'},
+    {key: 'otU', label: 'Overtime units', fmt: 'int', better: null},
+    {key: 'subU', label: 'Subcontracted units', fmt: 'int', better: null},
+    {key: 'maxBack', label: 'Peak backorders (units)', fmt: 'int', better: 'low'},
+    {key: 'wages', label: 'Regular wages', fmt: 'money', better: null}
+  ],
+  decisionKey: p => (p.strategy === 'chase' ? `chase|${p.sub}` : [p.strategy, p.W, p.strategy === 'hybrid' ? p.ot : 0, p.sub].join('|')),
+  simulate(p) {
+    const D = appDemand(p), out = [], invS = [], backS = [], WS = [], c = {wages: 0, hire: 0, fire: 0, ot: 0, sub: 0, hold: 0, bo: 0, end: 0};
+    let W = p.W0, inv = p.I0, back = 0, hires = 0, fires = 0, otU = 0, subU = 0, onTime = 0;
+    for (let m = 0; m < 12; m++) {
+      const need = D[m] + back - inv, Wt = p.strategy === 'chase' ? Math.max(0, Math.ceil(Math.max(0, need) / p.rate)) : p.W;
+      if (Wt > W) { hires += Wt - W; c.hire += (Wt - W) * p.hire; } else if (Wt < W) { fires += W - Wt; c.fire += (W - Wt) * p.fire; }
+      W = Wt;
+      const reg = W * p.rate, ot = p.strategy === 'hybrid' && need > reg ? Math.min(need - reg, Math.floor(reg * p.ot / 100)) : 0;
+      const sub = p.sub && need > reg + ot ? need - reg - ot : 0, avail = inv + reg + ot + sub;
+      onTime += Math.min(D[m], Math.max(0, avail - back));
+      const served = Math.min(avail, D[m] + back);
+      back = D[m] + back - served; inv = avail - served;
+      c.wages += W * p.wage; c.ot += ot * p.otc; c.sub += sub * p.subc; c.hold += inv * p.h; c.bo += back * p.bo;
+      otU += ot; subU += sub; out.push(reg + ot + sub); invS.push(inv); backS.push(back); WS.push(W);
+    }
+    c.end = back * p.subc; // backorders left in December are covered by the subcontractor at year end
+    const total = sum(Object.values(c));
+    return {D, out, invS, backS, WS, cost: c, total, fill: onTime / sum(D), avgInv: sum(invS) / 12, changes: hires + fires, hires, fires, otU, subU, maxBack: Math.max(...backS), wages: c.wages, endBack: back};
+  },
+  alternatives(p) {
+    const D = appDemand(p), avgW = Math.ceil(sum(D) / 12 / p.rate);
+    return [
+      {name: 'Chase strategy', why: 'Hire and lay off to match each month', p: {...p, strategy: 'chase', sub: false}},
+      {name: 'Level at average demand', why: `${avgW} workers all year, inventory absorbs the seasons`, p: {...p, strategy: 'level', W: clamp(avgW, 20, 400), sub: false}},
+      {name: 'Level + subcontracting', why: `${avgW} workers; subcontract any shortfall`, p: {...p, strategy: 'level', W: clamp(avgW, 20, 400), sub: true}},
+      {name: 'Hybrid: 90% of average + 20% overtime', why: 'Smaller workforce, overtime in the peaks', p: {...p, strategy: 'hybrid', W: clamp(Math.round(avgW * 0.9), 20, 400), ot: 20, sub: false}}
+    ];
+  },
+  search(p) {
+    const D = appDemand(p), lo = clamp(Math.floor(Math.min(...D) / p.rate * 0.8), 20, 400), hi = clamp(Math.ceil(Math.max(...D) / p.rate * 1.1), 20, 400);
+    let best = null, n = 0;
+    const tryP = q => { n++; const r = this.simulate(q); if (!best || r.total < best.r.total - 1e-9) best = {p: q, r}; };
+    for (const sub of [false, true]) {
+      tryP({...p, strategy: 'chase', sub});
+      for (let W = lo; W <= hi; W++) { tryP({...p, strategy: 'level', W, sub}); for (let ot = 5; ot <= 40; ot += 5) tryP({...p, strategy: 'hybrid', W, ot, sub}); }
+    }
+    return {name: 'Optimizer: strategy × workforce × overtime', why: `${n} plans simulated month by month (workforce ${lo}–${hi})`, p: best.p, n};
+  },
+  describe: p => (p.strategy === 'chase' ? `Chase${p.sub ? ' + subcontracting' : ''}` : `${p.strategy === 'level' ? 'Level' : 'Hybrid'}, ${p.W} workers${p.strategy === 'hybrid' ? `, overtime ≤ ${p.ot}%` : ''}${p.sub ? ' + subcontracting' : ''}`),
+  diagnose(p, r) {
+    const out = [], c = r.cost, avgD = sum(r.D) / 12;
+    if (c.hire + c.fire > 0.15 * r.total) out.push({sev: 'high', code: 'hirefire', title: 'Hiring and layoffs are expensive', text: `${F.int(r.hires)} hires and ${F.int(r.fires)} layoffs cost ${F.money(c.hire + c.fire)} (${F.pct((c.hire + c.fire) / r.total)} of the plan).`});
+    if (r.avgInv > 0.5 * avgD) out.push({sev: 'med', code: 'buildup', title: 'Large seasonal inventory', text: `Average inventory is ${F.int(r.avgInv)} units (${F.n1(r.avgInv / avgD)} months of demand), costing ${F.money(c.hold)} to hold.`});
+    if (c.bo + c.end > 0.1 * r.total) out.push({sev: 'high', code: 'backorder', title: 'Demand met late', text: `Backorders peak at ${F.int(r.maxBack)} units and cost ${F.money(c.bo + c.end)}; only ${F.pct(r.fill)} of demand is met in its month.`});
+    if (p.strategy !== 'chase' && p.W * p.rate * (1 + (p.strategy === 'hybrid' ? p.ot / 100 : 0)) < avgD * 0.97 && !p.sub) out.push({sev: 'med', code: 'understaffed', title: 'Capacity below average demand', text: `${p.W} workers make ${F.int(p.W * p.rate)} units a month at regular time, against average demand of ${F.int(avgD)}.`});
+    if (p.strategy !== 'chase' && p.W * p.rate > Math.max(...r.D)) out.push({sev: 'med', code: 'overstaffed', title: 'Capacity above peak demand', text: `${p.W} workers make ${F.int(p.W * p.rate)} units a month, more than the peak month (${F.int(Math.max(...r.D))}).`});
+    if (c.sub > 0.25 * r.total) out.push({sev: 'med', code: 'subheavy', title: 'Heavy reliance on the subcontractor', text: `${F.int(r.subU)} units are subcontracted at ${F.money(p.subc)} each (${F.money(c.sub)}).`});
+    if (!out.some(i => i.sev !== 'ok')) out.push({sev: 'ok', code: 'balanced', title: 'Balanced plan', text: `${F.pct(r.fill)} of demand is met on time at ${F.money(r.total)}.`});
+    return out;
+  },
+  lessons: {
+    hirefire: 'A pure chase plan pays for flexibility through hiring and layoffs. When those costs are high, keep a steadier workforce and use inventory or overtime.',
+    buildup: 'A level plan builds inventory before the peak. That is cheap only when holding cost is low relative to workforce-change costs.',
+    backorder: 'If capacity is below demand in the peak, customers wait. Backorders are usually the most expensive way to absorb seasonality.',
+    understaffed: 'Over the year, regular capacity plus overtime and subcontracting must at least cover total demand.',
+    overstaffed: 'Capacity above the peak month only builds inventory nobody needs.',
+    subheavy: 'Subcontracting is flexible but expensive per unit; use it for peaks, not as base capacity.',
+    balanced: 'The best aggregate plan mixes options: a steady core workforce, inventory built before the peak, and overtime or subcontracting for the top of the peak.'
+  },
+  explain(p, r, b) {
+    const c = b.r.cost;
+    return `The recommended plan is <b>${this.describe(b.p)}</b>, costing ${F.money(b.r.total)} against ${F.money(r.total)}. Its cost splits into wages ${F.money(c.wages)}, hiring and layoffs ${F.money(c.hire + c.fire)}, overtime ${F.money(c.ot)}, subcontracting ${F.money(c.sub + c.end)}, holding ${F.money(c.hold)} and backorders ${F.money(c.bo)}. It meets ${F.pct(b.r.fill)} of demand on time with an average inventory of ${F.int(b.r.avgInv)} units.`;
+  },
+  chart(r, b) {
+    const x = APP_MONTHS.map((_, i) => i + 1);
+    const series = [{name: 'Demand forecast', color: 'var(--ink)', values: r.D, dots: true}, {name: 'Your output', color: 'var(--you)', values: r.out}, {name: 'AI plan output', color: 'var(--ai)', values: b.out}, {name: 'Your end-of-month inventory', color: 'var(--s3)', values: r.invS}, {name: 'Your backorders', color: 'var(--bad)', values: r.backS}];
+    return legend(series.map(s => [s.name, s.color, 'line'])) + lineChart({x, series, xLabel: 'Month', yLabel: 'Units', discrete: true});
+  },
+  chartTitle: 'Monthly demand, output, inventory and backorders'
+},
+
+/* ===== 11. Distribution Network Design ===== */
+{
+  id: 'network', num: 11, name: 'Distribution Network Design', short: 'Network',
+  role: 'You design the distribution network for a consumer-goods company that makes everything in Pune. Choose which regional distribution centres (DCs) to open. Each open DC has a fixed annual cost and a capacity; customers are served from the cheapest open DC. Meet the one-day-delivery service target at the lowest total cost.',
+  concept: `<p>Network design trades <b>facility costs</b> against <b>transport costs</b> and <b>responsiveness</b>. More DCs mean shorter, cheaper outbound deliveries and faster service, but more fixed costs and smaller, less efficient inbound shipments from the plant. Fewer DCs centralise inventory and cut fixed costs but lengthen the last mile.</p>
+  <p>The simulator assigns each region's demand to the open DCs at the lowest cost per unit (inbound from the plant plus outbound to the region), respecting DC capacity. A region counts as served within one day if its DC is within the delivery radius.</p>`,
+  formulas: [
+    ['Distance', 'great-circle distance × 1.3 road factor'],
+    ['Unit delivery cost', 'inbound rate × km(plant → DC) + outbound rate × km(DC → region)'],
+    ['Fixed cost', 'Σ open DCs: annual fixed cost'],
+    ['Total cost', 'fixed + inbound + outbound + margin lost on unserved demand'],
+    ['Service level', 'demand served from a DC within the delivery radius ÷ total demand'],
+    ['DC utilization', 'units shipped ÷ capacity']
+  ],
+  params: [
+    ...NET_DCS.map((d, i) => ({id: 'o' + d.id, label: `Open DC: ${d.name}`, role: 'decision', type: 'checkbox', def: i === 0 || i === 1})),
+    {id: 'dscale', label: 'Demand level', unit: '% of base forecast', role: 'scenario', min: 50, max: 200, step: 5, def: 100},
+    {id: 'tin', label: 'Inbound transport rate (plant → DC)', unit: '$/unit per 100 km', role: 'scenario', min: 0, max: 2, step: 0.01, def: 0.12},
+    {id: 'tout', label: 'Outbound transport rate (DC → customer)', unit: '$/unit per 100 km', role: 'scenario', min: 0, max: 3, step: 0.01, def: 0.35},
+    {id: 'fscale', label: 'DC fixed costs', unit: '% of base', role: 'scenario', min: 25, max: 300, step: 5, def: 100},
+    {id: 'cap', label: 'Capacity per DC', unit: 'thousand units/year', role: 'scenario', min: 100, max: 2000, step: 50, def: 700},
+    {id: 'km', label: 'One-day delivery radius', unit: 'km', role: 'scenario', min: 200, max: 1200, step: 50, def: 600},
+    {id: 'svcT', label: 'Service target: demand within the radius', unit: '%', role: 'scenario', min: 0, max: 100, step: 5, def: 75},
+    {id: 'margin', label: 'Margin lost per unserved unit', unit: '$/unit', role: 'scenario', min: 0, max: 200, step: 5, def: 40, help: 'Only matters when the open DCs cannot ship all the demand.'}
+  ],
+  objective: {key: 'total', dir: 'min'},
+  feasible: (r, p) => r.unserved < 1 && r.service >= p.svcT / 100 - 1e-9,
+  kpis: [
+    {key: 'total', label: 'Total annual cost', fmt: 'money', better: 'low', primary: true},
+    {key: 'service', label: 'Demand within one-day radius', fmt: 'pct', better: 'high'},
+    {key: 'fixed', label: 'DC fixed cost', fmt: 'money', better: 'low'},
+    {key: 'transport', label: 'Transport cost', fmt: 'money', better: 'low'},
+    {key: 'avgKm', label: 'Avg delivery distance (km)', fmt: 'int', better: 'low'},
+    {key: 'nOpen', label: 'DCs open', fmt: 'int', better: null},
+    {key: 'maxU', label: 'Highest DC utilization', fmt: 'pct', better: null},
+    {key: 'unserved', label: 'Unserved demand (units)', fmt: 'int', better: 'low'}
+  ],
+  simulate(p) {
+    const open = NET_DCS.filter(d => p['o' + d.id]), dem = NET_REG.map(g => g.d * 1000 * p.dscale / 100), capLeft = {}, flows = [];
+    open.forEach(d => { capLeft[d.id] = p.cap * 1000; });
+    const pairs = [];
+    NET_REG.forEach((g, ri) => open.forEach(d => { const kin = netKm(NET_PLANT, d), kout = netKm(d, g); pairs.push({ri, d, kin, kout, u: (p.tin * kin + p.tout * kout) / 100}); }));
+    pairs.sort((a, b) => a.u - b.u || a.kout - b.kout);
+    const left = dem.slice();
+    let inbound = 0, outbound = 0, kmSum = 0, within = 0;
+    pairs.forEach(x => {
+      const q = Math.min(left[x.ri], capLeft[x.d.id]); if (q <= 0) return;
+      left[x.ri] -= q; capLeft[x.d.id] -= q;
+      inbound += q * p.tin * x.kin / 100; outbound += q * p.tout * x.kout / 100; kmSum += q * x.kout; if (x.kout <= p.km) within += q;
+      flows.push({r: x.ri, dc: x.d.id, q, km: x.kout});
+    });
+    const total0 = sum(dem), served = total0 - sum(left), unserved = sum(left), fixed = sum(open.map(d => d.f * 1000 * p.fscale / 100));
+    const util = Object.fromEntries(open.map(d => [d.id, 1 - capLeft[d.id] / (p.cap * 1000)]));
+    return {open: open.map(d => d.id), flows, util, fixed, inbound, outbound, transport: inbound + outbound, lostCost: unserved * p.margin, unserved,
+      total: fixed + inbound + outbound + unserved * p.margin, service: total0 ? within / total0 : 1, avgKm: served ? kmSum / served : 0, nOpen: open.length, maxU: open.length ? Math.max(...Object.values(util)) : 0};
+  },
+  alternatives(p) {
+    const set = ids => Object.fromEntries(NET_DCS.map(d => ['o' + d.id, ids.includes(d.id)]));
+    return [
+      {name: 'One central DC (Nagpur)', why: 'Centralise: lowest fixed cost, longest deliveries', p: {...p, ...set(['NAG'])}},
+      {name: 'Four metro DCs', why: 'Delhi, Mumbai, Kolkata and Chennai', p: {...p, ...set(['DEL', 'BOM', 'CCU', 'MAA'])}},
+      {name: 'All six DCs', why: 'Maximum responsiveness', p: {...p, ...set(NET_DCS.map(d => d.id))}},
+      {name: 'North–west–south trio', why: 'Delhi, Mumbai and Hyderabad', p: {...p, ...set(['DEL', 'BOM', 'HYD'])}}
+    ];
+  },
+  search(p) {
+    let best = null, n = 0;
+    for (let mask = 1; mask < 1 << NET_DCS.length; mask++) {
+      n++; const q = {...p}; NET_DCS.forEach((d, i) => { q['o' + d.id] = !!(mask & (1 << i)); });
+      const r = this.simulate(q), f = this.feasible(r, q);
+      if (!best || (f && !best.f) || (f === best.f && r.total < best.r.total - 1e-9)) best = {p: q, r, f};
+    }
+    return {name: 'Optimizer: every combination of DCs', why: `All ${n} non-empty DC networks evaluated with least-cost assignment`, p: best.p, n};
+  },
+  describe: p => { const o = NET_DCS.filter(d => p['o' + d.id]).map(d => d.name); return o.length ? o.join(', ') : 'No DC open'; },
+  diagnose(p, r) {
+    const out = [];
+    if (r.unserved >= 1) out.push({sev: 'high', code: 'dccap', title: 'Not enough DC capacity', text: `${F.int(r.unserved)} units of demand cannot be served, losing ${F.money(r.lostCost)} of margin. Open DCs can ship at most ${F.int(r.nOpen * p.cap)} thousand units a year.`});
+    if (r.service < p.svcT / 100 - 1e-9) out.push({sev: 'high', code: 'nservice', title: 'Service target missed', text: `Only ${F.pct(r.service)} of demand is served from a DC within ${p.km} km (target ${p.svcT}%).`});
+    NET_DCS.filter(d => p['o' + d.id] && r.util[d.id] < 0.3).forEach(d => out.push({sev: 'med', code: 'idle', title: `DC ${d.name} is barely used`, text: `It ships ${F.pct(r.util[d.id])} of its capacity but costs ${F.money(d.f * 1000 * p.fscale / 100)} a year.`}));
+    if (r.avgKm > 700) out.push({sev: 'med', code: 'longhaul', title: 'Long deliveries', text: `The average delivery travels ${F.int(r.avgKm)} km, costing ${F.money(r.outbound)} in outbound transport.`});
+    if (r.nOpen > 1) {
+      const drop = NET_DCS.filter(d => p['o' + d.id]).map(d => { const q = {...p, ['o' + d.id]: false}, rr = this.simulate(q); return {d, rr, ok: this.feasible(rr, q)}; }).filter(x => x.ok && x.rr.total < r.total - 1).sort((a, b) => a.rr.total - b.rr.total)[0];
+      if (drop) out.push({sev: 'med', code: 'toomany', title: `Closing ${drop.d.name} would save money`, text: `Without it the network still meets the service target and costs ${F.money(drop.rr.total)} instead of ${F.money(r.total)}.`});
+    }
+    if (!out.some(i => i.sev !== 'ok')) out.push({sev: 'ok', code: 'goodnet', title: 'Efficient network', text: `${F.pct(r.service)} of demand within ${p.km} km at ${F.money(r.total)} a year.`});
+    return out;
+  },
+  lessons: {
+    dccap: 'Capacity is a hard limit: a cheap network that cannot ship the volume loses far more in margin than it saves.',
+    nservice: 'Responsiveness needs facilities close to customers. The service target sets the minimum number and spread of DCs.',
+    idle: 'A DC that serves little demand rarely earns back its fixed cost; its customers can often be served from a neighbour.',
+    longhaul: 'Outbound (less-than-truckload) transport costs more per km than inbound truckloads, so DCs should sit near demand.',
+    toomany: 'Each extra facility adds fixed cost and splits volume. Add DCs only while the transport and service gains exceed their cost.',
+    goodnet: 'A good network balances fixed, inbound and outbound costs while meeting the service target.'
+  },
+  explain(p, r, b) {
+    return `The recommended network is <b>${this.describe(b.p)}</b>. It costs ${F.money(b.r.total)} a year (fixed ${F.money(b.r.fixed)}, transport ${F.money(b.r.transport)}) against ${F.money(r.total)}, and serves ${F.pct(b.r.service)} of demand within ${p.km} km (target ${p.svcT}%). Average delivery distance is ${F.int(b.r.avgKm)} km against ${F.int(r.avgKm)} km. The optimizer checked every combination of the six candidate DCs.`;
+  },
+  chart(r, b) {
+    return `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px">${netMap(r, 'Your network')}${netMap(b, 'AI recommendation')}</div>` + legend([['Open DC', 'var(--ai)'], ['Closed candidate', 'var(--faint)'], ['Customer region (size = demand)', 'var(--you)'], ['Plant (Pune)', 'var(--ink)']]);
+  },
+  chartTitle: 'Network map: which DC serves each region'
 }
+
 
 ];
 const TOPIC = Object.fromEntries(TOPICS.map(t => [t.id, t]));
@@ -1266,7 +1749,44 @@ const CAMPAIGN = {
     const at = q ? 2 : 1;
     if (k >= at) { ch.rating = 95; ch.allow = 18; if (k === at) ev.push('New assembly operator: the time study is re-rated at 95% performance with an 18% allowance.'); }
     return {ch, ev};
+  }},
+  contracts: {unit: 'selling season', mult: {quarter: 1, year: 4}, script(period, k, d) {
+    const q = period === 'quarter', ch = {seed: (k % 5) + 1}, ev = [];
+    ch.mu = d.mu * (q ? Math.pow(1.03, k) * SEASON[k % 4] : Math.pow(1.1, k));
+    ch.c = d.c * Math.pow(q ? 1.01 : 1.05, k);
+    if (q && k % 4 === 3) ev.push('Festive season: demand peaks this quarter.');
+    if ((q && k >= 2) || (!q && k >= 1)) { ch.sd = d.sd * 1.5; if ((q && k === 2) || (!q && k === 1)) ev.push('A new fashion line makes demand harder to predict: the forecast standard deviation rises 50%.'); }
+    if ((q && k >= 4) || (!q && k >= 2)) { ch.w = d.w + 10; ch.wb = d.wb + 10; ch.wr = d.wr + 5; if ((q && k === 4) || (!q && k === 2)) ev.push('The supplier raises its contract prices: wholesale and buyback +$10, revenue sharing +$5.'); }
+    ev.push('A new set of 1,000 seasons is simulated for this round.');
+    return {ch, ev};
+  }},
+  bullwhip: {unit: 'year (52 weeks)', mult: {quarter: 0.25, year: 1}, script(period, k, d) {
+    const q = period === 'quarter', ch = {seed: (k % 5) + 1}, ev = [];
+    ch.base = d.base * (q ? Math.pow(1.02, k) * SEASON[k % 4] : Math.pow(1.08, k));
+    if (q && k % 4 === 3) { ch.step = 60; ev.push('Festive promotion: customer demand jumps 60% from week 11.'); }
+    if ((q && k >= 2) || (!q && k >= 1)) { ch.L = 3; if ((q && k === 2) || (!q && k === 1)) ev.push('Port congestion: the lead time between stages rises to 3 weeks.'); }
+    if ((q && k >= 5) || (!q && k >= 3)) { ch.cShare = 20; if ((q && k === 5) || (!q && k === 3)) ev.push('A shared cloud platform cuts the cost of sharing point-of-sale data to $20 a week.'); }
+    return {ch, ev};
+  }},
+  app: {unit: '12-month plan', mult: {quarter: 0.25, year: 1}, script(period, k, d) {
+    const q = period === 'quarter', ch = {}, ev = [];
+    ch.base = d.base * Math.pow(q ? 1.02 : 1.08, k);
+    ch.wage = d.wage * Math.pow(q ? 1.015 : 1.06, k);
+    if (k > 0) ev.push(q ? 'Rolling plan revision: demand and wages drift up.' : 'Demand grows about 8% a year; wages rise 6% a year.');
+    if ((q && k >= 3) || (!q && k >= 2)) { ch.fire = d.fire * 2; if ((q && k === 3) || (!q && k === 2)) ev.push('A new labour agreement doubles the layoff cost.'); }
+    if ((q && k >= 5) || (!q && k >= 3)) { ch.amp = 40; ch.subc = d.subc + 20; if ((q && k === 5) || (!q && k === 3)) ev.push('Demand becomes more seasonal (strength 40%), and the subcontractor raises its price by $20 a unit.'); }
+    return {ch, ev};
+  }},
+  network: {unit: 'year', mult: {quarter: 0.25, year: 1}, script(period, k, d) {
+    const q = period === 'quarter', ch = {}, ev = [];
+    ch.dscale = d.dscale * Math.pow(q ? 1.03 : 1.12, k);
+    ch.tout = d.tout * Math.pow(q ? 1.02 : 1.06, k);
+    if (k > 0) ev.push(q ? 'Demand grows about 3% a quarter; diesel prices push outbound rates up.' : 'Demand grows about 12% a year; outbound rates rise 6% a year.');
+    if ((q && k >= 3) || (!q && k >= 2)) { ch.km = 500; ch.svcT = 80; if ((q && k === 3) || (!q && k === 2)) ev.push('Quick-commerce competitors: the target becomes 80% of demand within 500 km.'); }
+    if ((q && k >= 5) || (!q && k >= 3)) { ch.fscale = 130; if ((q && k === 5) || (!q && k === 3)) ev.push('Warehouse rents rise 30%.'); }
+    return {ch, ev};
   }}
+
 };
 function campaignRound(t, period, k) {
   const c = CAMPAIGN[t.id], d = paramDefaults(t), {ch, ev, reveal} = c.script(period, k, d), scen = {};
@@ -1397,6 +1917,19 @@ function lineChart({x, series, hlines = [], shade = [], xLabel, yLabel, yFmt, ma
   });
   g += `<line class="axis" x1="${L}" x2="${W - R}" y1="${Tp + ph}" y2="${Tp + ph}"/><text x="${L + pw / 2}" y="${Hh - 4}" text-anchor="middle">${esc(xLabel)}</text><text transform="translate(12 ${Tp + ph / 2}) rotate(-90)" text-anchor="middle">${esc(yLabel)}</text>`;
   return `<svg class="chart" viewBox="0 0 ${W} ${Hh}" role="img" aria-label="${esc(yLabel)} by ${esc(xLabel)}">${g}</svg>`;
+}
+// Network map for topic 11: regions (circles sized by demand), candidate DCs (squares), flows and the plant.
+function netMap(r, title) {
+  const W = 300, H = 330, X = lon => 14 + (lon - 68) / (97 - 68) * (W - 28), Y = lat => 26 + (35.5 - lat) / (35.5 - 7) * (H - 40);
+  const dc = id => NET_DCS.find(d => d.id === id), maxD = Math.max(...NET_REG.map(g => g.d));
+  let g = `<text x="${W / 2}" y="14" text-anchor="middle" style="fill:var(--ink);font-weight:700">${esc(title)}</text>`;
+  r.open.forEach(id => { const d = dc(id); g += `<line x1="${X(NET_PLANT.lon)}" y1="${Y(NET_PLANT.lat)}" x2="${X(d.lon)}" y2="${Y(d.lat)}" stroke="var(--ink)" stroke-width="1.2" stroke-dasharray="3 3" opacity=".4"/>`; });
+  r.flows.forEach(f => { const a = NET_REG[f.r], d = dc(f.dc); g += `<line x1="${X(d.lon)}" y1="${Y(d.lat)}" x2="${X(a.lon)}" y2="${Y(a.lat)}" stroke="var(--ai)" stroke-width="${(1 + 3 * f.q / (maxD * 1000)).toFixed(2)}" opacity=".6"/>`; });
+  NET_REG.forEach((a, i) => { const fl = r.flows.filter(f => f.r === i); g += `<circle cx="${X(a.lon)}" cy="${Y(a.lat)}" r="${(3 + 6 * Math.sqrt(a.d / maxD)).toFixed(1)}" fill="var(--you)" opacity=".75" data-tip="${esc(a.name)}\n${fl.length ? 'Served from ' + fl.map(f => `${dc(f.dc).name} (${f.km} km, ${F.int(f.q)} units)`).join(', ') : 'Not served'}"/>`; });
+  NET_DCS.forEach(d => { const on = r.open.includes(d.id); g += `<rect x="${X(d.lon) - 6}" y="${Y(d.lat) - 6}" width="12" height="12" rx="2" fill="${on ? 'var(--ai)' : 'var(--panel)'}" stroke="${on ? 'var(--ai)' : 'var(--faint)'}" stroke-width="2" data-tip="${esc(d.name)} DC\n${on ? 'Open · utilization ' + F.pct(r.util[d.id]) : 'Closed'}"/><text x="${X(d.lon) + 9}" y="${Y(d.lat) + 4}" style="font-size:11px;fill:${on ? 'var(--ink)' : 'var(--muted)'}">${esc(d.name)}</text>`; });
+  const px = X(NET_PLANT.lon), py = Y(NET_PLANT.lat);
+  g += `<path d="M${px},${py - 7} L${px + 7},${py} L${px},${py + 7} L${px - 7},${py} Z" fill="var(--ink)" data-tip="Plant (Pune)"/>`;
+  return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(title)}">${g}</svg>`;
 }
 function gantt(groups) {
   const maxT = Math.max(...groups.flatMap(g => g.rows.map(r => Math.max(r.end, r.d)))) + 1;
@@ -1560,7 +2093,41 @@ const CASEDATA = {
         {title: 'Time study: assembly, 10 observed cycles (minutes)', note: `Performance rating of the observed operator: ${p.rating}%. Personal, fatigue and delay (PF&D) allowance: ${p.allow}%.`, columns: ['Cycle', ...cycles.map((_, i) => i + 1)], rows: [['Observed time', ...cycles]], summary: [['Mean observed time', n2(mean(cycles.map(Number)))], ['Rating', `${p.rating}%`], ['Allowance', `${p.allow}%`]]},
         {title: 'Demand, variability, cost and improvement data', columns: ['Item', 'Value'], rows: [['Demand', `${p.D} units per day`], ['Available time', `${p.T} minutes per day`], ['Variability', `ca² = ce² = ${p.cv} (1 = random, exponential-like)`], ['Delay cost', `${F.money2(p.dc)} per unit per hour of lead time`], ['Lost margin', `${F.money(p.margin)} per unit of demand not made`],
           ['SMED', `Cuts every setup time by 60%; costs ${F.money(p.cSmed)} per day`], ['Cellular layout', `Cuts transport time by 80%; costs ${F.money(p.cCell)} per day`], ['Poka-yoke at source', `Removes the inspection step; costs ${F.money(p.cPoka)} per day`]]}]};
+  },
+  contracts(p) {
+    const hist = stdNormals(61000 + p.seed * 7919, 12).map(x => Math.max(0, Math.round(p.mu + p.sd * x)));
+    return {brief: `You buy a seasonal product (monsoon rainwear, festive gift boxes) that must be ordered once, before the season, with no reorders. You sell it at ${F.money(p.p)} per unit; anything left at the end of the season is cleared at ${F.money(p.v)}, and demand you cannot meet is lost. The supplier, whose production cost is ${F.money(p.c)} per unit, offers the three contracts in Exhibit 1. Exhibit 3 shows demand in the last 12 seasons. Choose a contract and an order quantity to maximise your expected profit.`,
+      exhibits: [
+        {title: 'Contract offers from the supplier', columns: ['Contract', 'Price you pay per unit', 'Unsold units', 'Sales revenue'], rows: [['Wholesale price', F.money(p.w), `You clear them at ${F.money(p.v)}`, 'You keep 100%'], ['Buyback', F.money(p.wb), `The supplier refunds ${F.money(p.b)} per unit`, 'You keep 100%'], ['Revenue sharing', F.money(p.wr), `You clear them at ${F.money(p.v)}`, `You keep ${p.phi}%; the supplier gets ${100 - p.phi}%`]]},
+        {title: 'Price and cost data', columns: ['Item', 'Value'], rows: [['Retail price', `${F.money(p.p)} per unit`], ['Salvage value of leftovers', `${F.money(p.v)} per unit`], ["Supplier's production cost", `${F.money(p.c)} per unit (for the supply-chain view)`], ['Unmet demand', 'Lost sale, no backorders, no goodwill cost'], ['Ordering', 'One order before the season, delivered in full before it starts']]},
+        {title: 'Demand in the last 12 seasons (units)', note: `Planning forecast for the coming season: mean ${p.mu} units, standard deviation ${p.sd}, roughly normal. Seasons are independent. Demand scenario ${p.seed}.`, columns: ['Season', ...hist.map((_, i) => i + 1)], rows: [['Demand', ...hist]], summary: [['Mean', n1(mean(hist))], ['Std. deviation', n1(stdev(hist))], ['Min', Math.min(...hist)], ['Max', Math.max(...hist)]]}]};
+  },
+  bullwhip(p) {
+    const pos = stdNormals(71000 + p.seed * 7919, 26).map(x => Math.max(0, Math.round(p.base + p.noise * x)));
+    return {brief: `A beverage company's chain has four stages: retailer, wholesaler, distributor and factory. Customers buy about ${p.base} units a week at the retailer (Exhibit 3), and marketing expects demand to change by ${p.step}% from week 11 onward. Each stage ships what it can from stock, backorders the rest, and orders from the stage above; deliveries take ${p.L} weeks between stages and production takes ${p.L} weeks. Every stage follows the ordering policy you set. Holding a unit costs ${F.money2(p.h)} a week and a backorder ${F.money2(p.bc)} a week at every stage. Minimise the chain's total cost over 52 weeks.`,
+      exhibits: [
+        {title: 'Chain structure and starting position', columns: ['Stage', 'Orders from', 'Lead time (weeks)', 'Starting inventory', 'Starting pipeline'], rows: BW_STAGES.map((s, i) => [s, i < 3 ? BW_STAGES[i + 1] : 'Own production', p.L, F.int(p.base * (1 + p.ssw)), `${p.L} × ${p.base} units`])},
+        {title: 'Policy, cost and remedy data', columns: ['Item', 'Value'], rows: [['Forecast', 'Exponential smoothing of the demand each stage sees (its incoming orders, or customer sales if data are shared)'], ['Order', 'Forecast + β × (target − inventory position); target = forecast × (lead time + safety weeks); inventory position = on hand − backorders + in transit + still owed by the supplier'], ['Holding cost', `${F.money2(p.h)} per unit per week, every stage`], ['Backorder cost', `${F.money2(p.bc)} per unit per week, every stage`], ['POS data sharing', `${F.money(p.cShare)} per week: every stage forecasts from customer sales`], ['Faster deliveries', `${F.money(p.cFast)} per week: lead time ${Math.max(1, p.L - 1)} instead of ${p.L} weeks`]]},
+        {title: 'Customer sales at the retailer: last 26 weeks (units)', note: `Point-of-sale data before the planning year. Expected change from week 11 of the plan: ${p.step}%. Demand scenario ${p.seed}.`, columns: ['Weeks', ...Array.from({length: 13}, (_, i) => `+${i}`)], rows: [['1–13', ...pos.slice(0, 13)], ['14–26', ...pos.slice(13)]], summary: [['Mean', n1(mean(pos))], ['Std. deviation', n1(stdev(pos))]]}]};
+  },
+  app(p) {
+    const D = appDemand(p);
+    return {brief: `You plan next year's production for a family of air coolers and fans made in one plant. Exhibit 1 is the monthly demand forecast. Each worker makes ${p.rate} units a month at regular time and costs ${F.money(p.wage)} a month. You start with ${p.W0} workers and ${F.int(p.I0)} units in stock. Choose a level, chase or hybrid plan to meet demand at the lowest total cost; backorders left in December must be covered by the subcontractor.`,
+      exhibits: [
+        {title: 'Monthly demand forecast (units)', columns: ['Month', ...APP_MONTHS], rows: [['Demand', ...D]], summary: [['Total', F.int(sum(D))], ['Average', F.int(sum(D) / 12)], ['Peak', `${F.int(Math.max(...D))} (${APP_MONTHS[D.indexOf(Math.max(...D))]})`], ['Low', `${F.int(Math.min(...D))} (${APP_MONTHS[D.indexOf(Math.min(...D))]})`]]},
+        {title: 'Capacity and cost data', columns: ['Item', 'Value'], rows: [['Output per worker', `${p.rate} units per month (regular time)`], ['Wage', `${F.money(p.wage)} per worker per month`], ['Overtime', `${F.money(p.otc)} per unit, up to the overtime limit you set (hybrid plans)`], ['Subcontracting', `${F.money(p.subc)} per unit, unlimited`], ['Hiring and training', `${F.money(p.hire)} per worker`], ['Layoff', `${F.money(p.fire)} per worker`], ['Holding', `${F.money2(p.h)} per unit per month (end-of-month stock)`], ['Backorder', `${F.money2(p.bo)} per unit per month`]]},
+        {title: 'Starting position', columns: ['Item', 'Value'], rows: [['Workforce', `${p.W0} workers`], ['Inventory', `${F.int(p.I0)} units`], ['Backorders', 'None'], ['Level plan', 'Workforce set once in January and held all year'], ['Chase plan', 'Workforce reset every month to cover that month\'s net requirement']]}]};
+  },
+  network(p) {
+    const dem = NET_REG.map(g => Math.round(g.d * p.dscale / 100));
+    return {brief: `A consumer-goods company makes everything in its Pune plant and ships to twelve regions through regional distribution centres (DCs). Exhibit 1 lists the six candidate DCs, Exhibit 2 the regional demand and Exhibit 3 the road distances. Shipping costs ${F.money2(p.tin)} per unit per 100 km from the plant to a DC (full trucks) and ${F.money2(p.tout)} per unit per 100 km from a DC to customers. Each DC can ship ${F.int(p.cap)} thousand units a year. Management wants ${p.svcT}% of demand served from a DC within ${p.km} km (next-day delivery). Choose which DCs to open to minimise total annual cost while meeting the target.`,
+      exhibits: [
+        {title: 'Candidate DCs', columns: ['DC', 'Fixed cost ($ thousand/year)', 'Capacity (thousand units/year)', 'Road km from the Pune plant'], rows: NET_DCS.map(d => [d.name, Math.round(d.f * p.fscale / 100), p.cap, netKm(NET_PLANT, d)])},
+        {title: 'Regional demand (thousand units/year)', columns: ['Region', 'Demand'], rows: NET_REG.map((g, i) => [g.name, dem[i]]), summary: [['Total demand', `${F.int(sum(dem))} thousand units`]]},
+        {title: 'Road distance from each candidate DC to each region (km)', columns: ['Region', ...NET_DCS.map(d => d.name)], rows: NET_REG.map(g => [g.name, ...NET_DCS.map(d => netKm(d, g))])},
+        {title: 'Cost and service data', columns: ['Item', 'Value'], rows: [['Inbound transport', `${F.money2(p.tin)} per unit per 100 km (plant → DC)`], ['Outbound transport', `${F.money2(p.tout)} per unit per 100 km (DC → region)`], ['Service target', `${p.svcT}% of demand within ${p.km} km of its DC`], ['Unserved demand', `${F.money(p.margin)} margin lost per unit`], ['Assignment', 'Each region is served by the open DC with the lowest total cost per unit, within capacity']]}]};
   }
+
 };
 function caseDataFor(t) {
   const p = state.inputs[t.id], c = state.camp[t.id];
@@ -1932,7 +2499,11 @@ function guideHTML() {
     <li>Staff a service system using utilization, Erlang C, Little's Law and service-level targets.</li>
     <li>Design supply-chain resilience with buffer stock, dual sourcing and contingency plans.</li>
     <li>Analyse process time: takt time, lead time, process cycle efficiency, batch size and Little's Law, with a time study for standard time.</li>
-    <li>Build an ARIMA forecast step by step (Box–Jenkins): visual check, ADF test, differencing, ACF/PACF identification, and model selection with AIC/BIC and out-of-sample MAPE.</li>
+    <li>Choose an order quantity with the newsvendor critical ratio, and compare wholesale, buyback and revenue-sharing contracts (double marginalisation).</li>
+    <li>Explain and reduce the bullwhip effect with forecasting, order smoothing, point-of-sale data sharing and shorter lead times.</li>
+    <li>Build an aggregate production plan and compare level, chase and hybrid strategies (workforce, overtime, subcontracting, inventory).</li>
+    <li>Design a distribution network that trades DC fixed costs against inbound and outbound transport and a service radius.</li>
+    <li>Build a forecast step by step (Box–Jenkins): visual check, ADF test, regular and seasonal differencing, ACF/PACF identification of ARIMA and SARIMA orders, and model selection across ARIMA, SARIMA, naïve, moving-average and exponential-smoothing models with AIC/BIC and out-of-sample MAPE.</li>
     <li>Use analytics (what-if testing, optimization, diagnosis) to evaluate operational decisions.</li></ol>
   <h3>Suggested 75-minute session</h3><table class="tbl"><thead><tr><th>Time</th><th>Activity</th></tr></thead><tbody>
     <tr><td>0–10</td><td>Introduce the role: students are operations managers. Show the layout: decisions (blue) vs scenario inputs.</td></tr>
@@ -1947,8 +2518,13 @@ function guideHTML() {
     <li><b>Queues:</b> Why does going from 4 to 5 servers cut waiting so much more than going from 5 to 6?</li>
     <li><b>Disruption:</b> Set duration to 0. Which strategy wastes the most money? How do you price resilience?</li>
     <li><b>Process time:</b> Why does halving the batch size first cut lead time and then suddenly make it explode? What does SMED change? What share of the lead time is value-added?</li></ul>
-  <h3>Topic 8: Time Series Analysis lab</h3>
-  <p>A stepwise lab that follows the ARIMA sessions: (1) visualise and judge stationarity, (2) run the ADF test and conclude, (3) choose a transformation, (4) re-test and confirm (or difference again), (5) read the ACF, (6) read the PACF, (7) specify and fit up to three ARIMA models (trained on 335 days, tested on the last 30), and (8) choose the model to forecast with. The Analytics Agent runs only the analyses students request and checks every decision against the evidence. It waits for the student and never advances on its own. Wrong choices are allowed and their consequences show up later, so students learn from the path they took. The debrief reveals the true generating process, an automatic AIC search, a scorecard and a 14-day forecast. The ADF, ACF and PACF numbers match Python statsmodels, so students can repeat the analysis in Colab using the CSV. Use “Mystery dataset” for an exam-style exercise and “New sample” to give each student different data.</p>
+  <h3>Topic 12: Time Series Analysis lab</h3>
+  <p>A stepwise lab that follows the forecasting sessions: (1) visualise and judge stationarity (trend, weekly seasonality, variance), (2) run the ADF test and conclude, (3) choose a transformation: regular difference, seasonal difference Δ₇, both, or a log, (4) re-test with the ADF test and a weekly-pattern check (or difference again), (5) read the ACF and (6) the PACF, at the short lags and, after seasonal differencing, at lags 7, 14 and 21, (7) fit up to four candidates from any family: ARIMA, SARIMA(p,d,q)(P,D,Q)₇, naïve, seasonal naïve, moving average, SES, Holt, Holt-Winters additive or multiplicative (trained on 335 days, tested on the last 30), and (8) choose the model to forecast with. Seven datasets cover AR, MA, ARMA, ARIMA and two weekly-seasonal SARIMA processes. The Analytics Agent runs only the analyses students request and checks every decision against the evidence; it waits for the student and never advances on its own. The debrief reveals the true generating process, an automatic AIC search, a <b>model tournament</b> of every family on the same test set, a scorecard and a 14-day forecast. ADF, ACF and PACF match Python statsmodels and SARIMA estimates agree with SARIMAX, so students can repeat the analysis in Colab using the CSV. Use “Mystery dataset” for an exam-style exercise and “New sample” to give each student different data.</p>
+  <h3>Discussion prompts for topics 8–11</h3><ul>
+    <li><b>Contracts:</b> Why does the retailer order less under the wholesale contract than the supply chain would like? Find a buyback refund that makes the retailer order the chain optimum.</li>
+    <li><b>Bullwhip:</b> Which single remedy cuts the factory's order swings most: sharing POS data, smoothing orders or a shorter lead time? Why does safety stock make it worse?</li>
+    <li><b>Aggregate planning:</b> At what layoff cost does the chase plan stop being competitive? What happens to the level plan when seasonality doubles?</li>
+    <li><b>Network design:</b> Raise the service target to 90% within 500 km. How many DCs do you need, and what does responsiveness cost per unit?</li></ul>
   <h3>Study Room</h3>
   <p>Students upload your session .pptx in <b>Study Room</b> and get study notes, a slide viewer with visual explanations, quiz practice and slide-grounded Q&amp;A, plus buttons that open the matching OpsLab simulation. Files are read in the browser. Slide text goes only to the AI model the student connects (Ollama keeps it on their laptop). Without an AI model connected, the agent still builds notes, quizzes and answers directly from the slides. A good routine is to share the deck after class, ask students to score 80% or more on a quiz, and then play the linked simulation.</p>
   <h3>Scenario Agent and Ollama</h3>
@@ -2016,7 +2592,7 @@ function saveLLM() {
 }
 const getChat = id => (LLM.chats[id] = LLM.chats[id] || {view: [], api: [], sig: null, grounded: false});
 
-const LLM_SYSTEM = `You are the OpsLab Operations Coach, a live AI agent inside a classroom simulator for an MBA Operations Management course. The student plays an operations manager. Seven topics exist: bottleneck & capacity, inventory management, production scheduling, quality management, queue management, supply chain disruption, process time analytics (takt, lead time, batch size, PCE, Little's Law, time study). Each user message says which topic the student is on.
+const LLM_SYSTEM = `You are the OpsLab Operations Coach, a live AI agent inside a classroom simulator for an MBA Operations Management course. The student plays an operations manager. Eleven simulation topics exist: bottleneck & capacity, inventory management, production scheduling, quality management, queue management, supply chain disruption, process time analytics (takt, lead time, batch size, PCE, Little's Law, time study), newsvendor & supply contracts (critical ratio, buyback, revenue sharing, double marginalisation), bullwhip effect (beer game: forecasting, order smoothing, information sharing, lead time), aggregate production planning (level, chase, hybrid, overtime, subcontracting) and distribution network design (DC location, fixed vs transport cost, service radius). Each user message says which topic the student is on.
 
 How to work:
 - Call get_current_state first to see the inputs, the student's latest run and the OpsLab Agent's best alternative.
@@ -3492,8 +4068,10 @@ function sections(slides) {
 const OPS_LINKS = [
   ['bottleneck', /bottleneck|capacity|utili[sz]ation|throughput|theory of constraints/gi], ['inventory', /inventory|\beoq\b|reorder|safety stock|holding cost|ordering cost/gi],
   ['scheduling', /schedul|sequenc|dispatch|\bedd\b|\bspt\b|tardiness|makespan/gi], ['quality', /quality|defect|inspection|six sigma|dpmo|cost of quality/gi],
-  ['queue', /queue|queuing|queueing|waiting line|erlang|little'?s law|arrival rate|service rate/gi], ['supply', /supply chain|supplier|disruption|sourcing|contract|bullwhip|resilien/gi],
-  ['leadtime', /lead time|takt|cycle time|batch size|smed|value[- ]added|time study|\bwip\b/gi], ['tsa', /arima|time series|stationar|autocorrel|\bacf\b|\bpacf\b|forecast|exponential smoothing|holt|dickey|\badf\b/gi]];
+  ['queue', /queue|queuing|queueing|waiting line|erlang|little'?s law|arrival rate|service rate/gi], ['supply', /supply chain|supplier|disruption|sourcing|resilien/gi],
+  ['leadtime', /lead time|takt|cycle time|batch size|smed|value[- ]added|time study|\bwip\b/gi], ['tsa', /arima|sarima|time series|stationar|autocorrel|\bacf\b|\bpacf\b|forecast|exponential smoothing|holt|winters|seasonal|dickey|\badf\b/gi],
+  ['contracts', /newsvendor|news vendor|critical ratio|buy-?back|revenue[- ]sharing|supply contract|double marginali[sz]ation|salvage|overage|underage/gi], ['bullwhip', /bullwhip|beer game|order variability|information sharing|point[- ]of[- ]sale|demand amplification/gi],
+  ['app', /aggregate plan|chase strategy|level strategy|hybrid strategy|workforce|overtime|subcontract|hiring|layoff/gi], ['network', /network design|facility location|warehouse|distribution cent(?:re|er)|\bdcs?\b|transportation cost|centrali[sz]|location decision|cross-?dock/gi]];
 function opsLinks(text, min = 2) {
   return OPS_LINKS.map(([id, re]) => ({id, n: (text.match(re) || []).length})).filter(x => x.n >= min).sort((a, b) => b.n - a.n).slice(0, 3)
     .map(x => ({...x, name: x.id === 'tsa' ? 'Time Series Analysis lab' : TOPIC[x.id].name}));

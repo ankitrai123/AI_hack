@@ -84,7 +84,11 @@ const ISSUE_LABELS = {
   escape: 'Defects reach customers', noprev: 'No prevention spend', overinspect: 'Inspection costs more than it saves', appraisal: 'Appraisal-heavy quality system', overprev: 'Prevention past its useful limit',
   unstable: 'Unstable queue (too few servers)', sl: 'Service-level target missed', highutil: 'Servers run too hot', overstaff: 'Overstaffed', waitcost: 'Waiting cost exceeds wages',
   stockout: 'Stockouts during the disruption', nocont: 'No contingency plan', slow: 'Contingency response too slow', capacity: 'Backup capacity too small', premium: 'Dual-sourcing premium too large', overbuffer: 'Buffer larger than needed', overhang: 'Post-disruption inventory overhang',
-  overload: 'Batches too small: capacity below demand', bigbatch: 'Large batches inflate lead time', queue: 'Queueing at the bottleneck dominates', setup: 'Long setups force big batches', transport: 'Transport and admin delays', pce: 'Very low process cycle efficiency'
+  overload: 'Batches too small: capacity below demand', bigbatch: 'Large batches inflate lead time', queue: 'Queueing at the bottleneck dominates', setup: 'Long setups force big batches', transport: 'Transport and admin delays', pce: 'Very low process cycle efficiency',
+  overorder: 'Order above the critical-ratio quantity', underorder: 'Order below the critical-ratio quantity', contract: 'Chose a worse supply contract', doublemarg: 'Double marginalisation', risk: 'High chance of a losing season',
+  amplify: 'Orders amplify up the chain (bullwhip)', overreact: 'Orders over-correct inventory gaps', noshare: 'No point-of-sale data sharing', backlog: 'Backorders dominate chain cost', overstock: 'Too much safety stock in the chain', leadtime: 'Long lead times not addressed',
+  hirefire: 'Costly hiring and layoffs', buildup: 'Large seasonal inventory', backorder: 'Plan meets demand late', understaffed: 'Capacity below average demand', overstaffed: 'Capacity above peak demand', subheavy: 'Heavy reliance on subcontracting',
+  dccap: 'Not enough DC capacity', nservice: 'Network misses the service target', idle: 'Barely used DC', longhaul: 'Long delivery distances', toomany: 'More DCs than needed'
 };
 const IGNORE_ISSUES = new Set(['shift', 'timestudy']); // informational only
 

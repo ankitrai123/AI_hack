@@ -118,6 +118,14 @@ details.learn[open] summary::before{content:"▾ "}
 table.jobs{border-collapse:collapse;width:100%;font-size:12.5px}
 table.jobs th,table.jobs td{padding:3px 6px;text-align:left;border-bottom:1px solid var(--line)}
 table.jobs input{width:64px}
+.seg{display:inline-flex;margin-top:12px;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.seg button{border:0;background:var(--panel);color:var(--ink);padding:7px 14px;font-weight:600;font-size:13px}
+.seg button.on{background:var(--accent);color:var(--accent-ink)}
+.rchips{display:flex;flex-wrap:wrap;gap:6px}
+.rchip{font-size:12px;padding:3px 10px;border-radius:99px;border:1px solid var(--line);color:var(--muted);background:var(--panel-2)}
+.rchip.done{background:var(--good-soft);color:var(--good);border-color:transparent}
+.rchip.now{background:var(--accent);color:var(--accent-ink);border-color:transparent;font-weight:700}
+.field.locked input,.field.locked select{opacity:.75}
 .actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px;align-items:center}
 .err{color:var(--bad);font-weight:600;font-size:12.5px}
 
@@ -1046,7 +1054,7 @@ const TOPICS = [
     {id: 'od', label: 'Order entry delay', unit: 'min', role: 'scenario', min: 0, max: 480, step: 10, def: 60},
     {id: 'cv', label: 'Variability (ca² = ce²)', role: 'scenario', min: 0, max: 2, step: 0.1, def: 1, help: '0 = perfectly regular, 1 = random (exponential-like), 2 = very erratic.'},
     {id: 'dc', label: 'Delay cost', unit: '$/unit-hour of lead time', role: 'scenario', min: 0, max: 5, step: 0.05, def: 1},
-    {id: 'margin', label: 'Margin lost per unit not made', unit: '$/unit', role: 'scenario', min: 0, max: 200, step: 5, def: 40, help: 'Matters only when batches are so small that the line cannot meet demand.'},
+    {id: 'margin', label: 'Margin lost per unit not made', unit: '$/unit', role: 'scenario', min: 0, max: 300, step: 5, def: 120, help: 'Matters only when batches are so small that the line cannot meet demand.'},
     {id: 'cSmed', label: 'SMED cost', unit: '$/day', role: 'scenario', min: 0, max: 1000, step: 10, def: 150},
     {id: 'cCell', label: 'Cellular layout cost', unit: '$/day', role: 'scenario', min: 0, max: 1000, step: 10, def: 30},
     {id: 'cPoka', label: 'Poka-yoke cost', unit: '$/day', role: 'scenario', min: 0, max: 1000, step: 5, def: 10}
@@ -1150,6 +1158,100 @@ const TOPICS = [
 ];
 const TOPIC = Object.fromEntries(TOPICS.map(t => [t.id, t]));
 
+/* ---- Campaign mode: multi-round games over quarters or years ----
+   Each round changes the scenario (growth, seasonality, shocks). The student sets decisions once per
+   round; the round's result is scaled to the period (e.g. profit per shift × shifts per quarter). */
+const PERIODS = {quarter: {label: 'Quarterly', rounds: [4, 8]}, year: {label: 'Yearly', rounds: [3, 5]}};
+const SEASON = [0.9, 1.0, 1.05, 1.25]; // demand index for Q1..Q4
+const paramDefaults = t => Object.fromEntries(t.params.map(x => [x.id, JSON.parse(JSON.stringify(x.def))]));
+function fitParam(t, id, v) { const x = t.params.find(q => q.id === id); if (!x || x.type || typeof v !== 'number') return v; return round(clamp(Math.round(v / x.step) * x.step, x.min, x.max), 4); }
+const roundLabel = (period, k) => (period === 'quarter' ? `Q${k % 4 + 1} · Year ${Math.floor(k / 4) + 1}` : `Year ${k + 1}`);
+const CAMPAIGN = {
+  bottleneck: {unit: 'shift', mult: {quarter: 63, year: 250}, script(period, k, d) {
+    const q = period === 'quarter', ch = {}, ev = [];
+    ch.demand = d.demand * (q ? Math.pow(1.06, k) * SEASON[k % 4] : Math.pow(1.2, k));
+    ch.mcost = d.mcost * Math.pow(q ? 1.02 : 1.08, k);
+    if (q && k % 4 === 3) ev.push('Holiday season: demand peaks this quarter.');
+    if (q && k % 4 === 0 && k > 0) ev.push('After the holiday peak, demand falls back.');
+    if (q && k >= 2) { ch.tB = d.tB - 1; if (k === 2) ev.push('Assembly method improvement: assembly takes 1 minute less per unit from now on.'); }
+    if (!q && k >= 2) { ch.tC = 6; if (k === 2) ev.push('New product mix: packing now takes 6 minutes per unit.'); }
+    if (!q && k > 0) ev.push('Market growth of about 20% a year; machine lease costs rise 8% a year.');
+    return {ch, ev};
+  }},
+  inventory: {unit: '90-day period', mult: {quarter: 1, year: 4}, script(period, k, d) {
+    const q = period === 'quarter', ch = {seed: (k % 5) + 1}, ev = [];
+    ch.mu = d.mu * (q ? Math.pow(1.03, k) * SEASON[k % 4] : Math.pow(1.1, k));
+    ch.h = d.h * Math.pow(q ? 1.02 : 1.06, k);
+    if (q && k % 4 === 2) { ch.lt = 8; ev.push('Supplier capacity problems: lead time rises to 8 days this quarter.'); }
+    if (q && k % 4 === 3) ev.push('Holiday season: demand peaks this quarter.');
+    if (!q && k >= 1) { ch.lt = 7; if (k === 1) ev.push('The supplier moves production offshore: lead time rises to 7 days.'); }
+    if (!q && k >= 3) { ch.sigma = 9; if (k === 3) ev.push('New sales channels make demand more volatile (σ = 9 units/day).'); }
+    ev.push('A new demand pattern is drawn for this period.');
+    return {ch, ev};
+  }},
+  scheduling: {unit: 'weekly schedule', mult: {quarter: 13, year: 52}, script(period, k, d) {
+    const q = period === 'quarter', ch = {}, ev = [];
+    if (k > 0) {
+      const r = rng(97 + k * 31), jobs = d.jobs.map(j => ({id: j.id, p: 2 + Math.floor(r() * 9)}));
+      const P = sum(jobs.map(j => j.p));
+      jobs.forEach(j => { j.d = clamp(j.p + 1 + Math.floor(r() * P * 0.85), 1, 120); });
+      ch.jobs = jobs; ev.push('New order book: six jobs with new processing times and due dates.');
+    }
+    ch.pen = d.pen * Math.pow(q ? 1.05 : 1.15, k);
+    if ((q && k === 3) || (!q && k === 2)) { ch.pen *= 1.5; ev.push('A key customer adds stricter delivery terms: the late penalty rises 50%.'); }
+    return {ch, ev};
+  }},
+  quality: {unit: 'batch (one per week)', mult: {quarter: 13, year: 52}, script(period, k, d) {
+    const q = period === 'quarter', ch = {}, ev = [];
+    const launch = q ? 2 : 1;
+    if (k === launch) { ch.p0 = 9; ev.push('New product launch: the base defect rate jumps to 9%.'); }
+    else if (k > launch) { ch.p0 = Math.max(4, 9 - (q ? 1.5 : 2) * (k - launch)); ev.push(`Learning curve: the base defect rate improves to ${fitParam(TOPIC.quality, 'p0', ch.p0)}%.`); }
+    ch.ce = d.ce * Math.pow(q ? 1.02 : 1.05, k);
+    if ((q && k === 3) || (!q && k === 2)) { ch.ce = 200; ev.push('A product recall raises the cost of each escaped defect to $200.'); }
+    ch.ci = d.ci * Math.pow(q ? 1.02 : 1.05, k);
+    return {ch, ev};
+  }},
+  queue: {unit: 'hour (8 h × working days)', mult: {quarter: 504, year: 2000}, script(period, k, d) {
+    const q = period === 'quarter', ch = {}, ev = [];
+    ch.lam = d.lam * (q ? Math.pow(1.04, k) * SEASON[k % 4] : Math.pow(1.15, k));
+    if (q && k % 4 === 3) ev.push('Holiday rush: arrivals peak this quarter.');
+    if (q && k >= 2) { ch.wage = 33; if (k === 2) ev.push('New wage agreement: each server now costs $33/hour.'); }
+    if (!q) { ch.wage = d.wage * Math.pow(1.05, k); if (k > 0) ev.push('Customer traffic grows about 15% a year; wages rise 5% a year.'); }
+    if (!q && k >= 2) { ch.SLt = 85; if (k === 2) ev.push('Management raises the service target to 85% served within 2 minutes.'); }
+    return {ch, ev};
+  }},
+  supply: {unit: '60-day window', mult: {quarter: 1.5, year: 6}, hidden: ['dur'], script(period, k, d) {
+    const q = period === 'quarter', ch = {}, ev = [], reveal = [];
+    ch.dur = (q ? [0, 8, 20, 0, 12, 0, 25, 5] : [15, 0, 30, 10, 20])[k];
+    ev.push('Supplier risk: the primary supplier may shut for 0–30 days from day 10. You only find out after you commit your plan.');
+    reveal.push(ch.dur > 0 ? `What happened: the primary supplier was shut for ${ch.dur} days.` : 'What happened: no disruption this period.');
+    if (q && k >= 4) { ch.margin = 50; if (k === 4) ev.push('A price increase raises the margin to $50 per unit.'); }
+    if (!q && k >= 3) { ch.prem = 6; if (k === 3) ev.push('The backup supplier raises its premium to $6 per unit.'); }
+    return {ch, ev, reveal};
+  }},
+  leadtime: {unit: 'day', mult: {quarter: 63, year: 250}, script(period, k, d) {
+    const q = period === 'quarter', ch = {}, ev = [];
+    ch.D = d.D * Math.pow(q ? 1.02 : 1.04, k);
+    ch.dc = d.dc + (q ? 0.1 : 0.25) * k;
+    if (k > 0) ev.push(`Demand grows and customers grow less patient: delay cost $${fitParam(TOPIC.leadtime, 'dc', ch.dc)}/unit-hour.`);
+    const at = q ? 2 : 1;
+    if (k >= at) { ch.rating = 95; ch.allow = 18; if (k === at) ev.push('New assembly operator: the time study is re-rated at 95% performance with an 18% allowance.'); }
+    return {ch, ev};
+  }}
+};
+function campaignRound(t, period, k) {
+  const c = CAMPAIGN[t.id], d = paramDefaults(t), {ch, ev, reveal} = c.script(period, k, d), scen = {};
+  t.params.filter(x => x.role === 'scenario').forEach(x => { scen[x.id] = d[x.id]; });
+  Object.entries(ch).forEach(([id, v]) => { scen[id] = fitParam(t, id, v); });
+  return {k, label: roundLabel(period, k), events: ev, reveal: reveal || [], hidden: c.hidden || [], scenario: scen};
+}
+function campaignValue(t, r, p, period) {
+  let v = r[t.objective.key];
+  if (!isFinite(v) && t.id === 'queue') v = r.staff + p.lam * p.wcost; // overflowing queue: every arrival costs an hour of waiting
+  return v * CAMPAIGN[t.id].mult[period];
+}
+
+
 /* ---------------- 3. AI Operations Agent (rule-based, deterministic) ---------------- */
 const Agent = {
   decisionKey(topic, p) {
@@ -1214,7 +1316,7 @@ function shortNum(v) { const a = Math.abs(v); return a >= 1e6 ? (v / 1e6).toFixe
 function legend(items) {
   return '<div class="legend">' + items.map(([n, c, kind]) => `<span><i class="${kind || ''}" style="${kind === 'dash' ? '' : 'background:' + c}"></i>${esc(n)}</span>`).join('') + '</div>';
 }
-function barGroups({categories, series, ref, yLabel, fmt, sub}) {
+function barGroups({categories, series, ref, yLabel, fmt, sub, unit = ' units/shift'}) {
   const W = 640, Hh = 270, L = 52, R = 12, Tp = 14, B = 46, pw = W - L - R, ph = Hh - Tp - B;
   const max = niceMax(Math.max(...series.flatMap(s => s.values), ref ? ref.value : 0) * 1.08);
   const y = v => Tp + ph - v / max * ph;
@@ -1226,7 +1328,7 @@ function barGroups({categories, series, ref, yLabel, fmt, sub}) {
     series.forEach((s, j) => {
       const v = s.values[i], x = cx - (series.length * bw + (series.length - 1) * 2) / 2 + j * (bw + 2), h = Math.max(0, Tp + ph - y(v));
       const r = Math.min(4, h);
-      g += `<path d="M${x},${Tp + ph} V${y(v) + r} q0,-${r} ${r},-${r} H${x + bw - r} q${r},0 ${r},${r} V${Tp + ph} Z" fill="${s.color}" data-tip="${esc(c)} · ${esc(s.name)}\n${fmt(v)} units/shift"/>`;
+      g += `<path d="M${x},${Tp + ph} V${y(v) + r} q0,-${r} ${r},-${r} H${x + bw - r} q${r},0 ${r},${r} V${Tp + ph} Z" fill="${s.color}" data-tip="${esc(c)} · ${esc(s.name)}\n${fmt(v)}${unit}"/>`;
     });
     g += `<text x="${cx}" y="${Tp + ph + 16}" text-anchor="middle" style="fill:var(--ink);font-weight:600">${esc(c)}</text>`;
     if (sub) g += `<text x="${cx}" y="${Tp + ph + 31}" text-anchor="middle">${esc(sub[i])}</text>`;
@@ -1304,8 +1406,8 @@ function stackedBars({categories, stacks, fmt = F.money, axis = v => '$' + short
 
 /* ---------------- 5. UI & state ---------------- */
 const defaults = t => Object.fromEntries(t.params.map(x => [x.id, JSON.parse(JSON.stringify(x.def))]));
-const state = {view: 'bottleneck', inputs: {}, runs: {}, adviceOpen: {}, history: [], errors: {}};
-function resetState() { TOPICS.forEach(t => { state.inputs[t.id] = defaults(t); state.runs[t.id] = []; state.adviceOpen[t.id] = false; }); state.history = []; }
+const state = {view: 'bottleneck', inputs: {}, runs: {}, adviceOpen: {}, history: [], errors: {}, mode: {}, camp: {}};
+function resetState() { TOPICS.forEach(t => { state.inputs[t.id] = defaults(t); state.runs[t.id] = []; state.adviceOpen[t.id] = false; state.mode[t.id] = 'single'; state.camp[t.id] = null; }); state.history = []; }
 resetState();
 const lastParams = id => state.inputs[id];
 const lastRun = id => state.runs[id][state.runs[id].length - 1];
@@ -1321,15 +1423,16 @@ function renderNav() {
   $$('button', nav).forEach(b => b.onclick = () => { state.view = b.dataset.view; render(); window.scrollTo({top: 0}); });
 }
 
-function fieldHTML(t, x, p) {
-  const v = p[x.id], cls = 'field ' + (x.role === 'decision' ? 'decision' : '') + (x.showIf && !x.showIf(p) ? ' off' : '');
+function fieldHTML(t, x, p, locked = false) {
+  const v = p[x.id], cls = 'field ' + (x.role === 'decision' ? 'decision' : '') + (x.showIf && !x.showIf(p) ? ' off' : '') + (locked ? ' locked' : '');
+  const dis = locked || (x.showIf && !x.showIf(p));
   const lab = `<label for="in-${x.id}"><span>${esc(x.label)}</span>${x.unit ? `<span class="u">${esc(x.unit)}</span>` : ''}</label>`;
   const help = x.help ? `<div class="help">${esc(x.help)}</div>` : '';
-  if (x.type === 'select') return `<div class="${cls}">${lab}<select id="in-${x.id}" data-id="${x.id}">${x.options.map(([ov, ol]) => `<option value="${ov}" ${String(ov) === String(v) ? 'selected' : ''}>${esc(ol)}</option>`).join('')}</select>${help}</div>`;
-  if (x.type === 'text') return `<div class="${cls}">${lab}<input type="text" id="in-${x.id}" data-id="${x.id}" value="${esc(v)}" ${x.showIf && !x.showIf(p) ? 'disabled' : ''}>${help}</div>`;
-  if (x.type === 'checkbox') return `<div class="${cls}" style="grid-column:1/-1"><label class="checkrow"><input type="checkbox" id="in-${x.id}" data-id="${x.id}" ${v ? 'checked' : ''}><span>${esc(x.label)}</span></label>${help}</div>`;
-  if (x.type === 'jobs') return `<div class="field" style="grid-column:1/-1"><label>${esc(x.label)}</label><table class="jobs"><thead><tr><th>Job</th><th>Processing (days)</th><th>Due day</th></tr></thead><tbody>${v.map((j, i) => `<tr><td><b>${j.id}</b></td><td><input type="number" min="1" max="30" step="1" data-job="${i}" data-f="p" value="${j.p}"></td><td><input type="number" min="1" max="120" step="1" data-job="${i}" data-f="d" value="${j.d}"></td></tr>`).join('')}</tbody></table></div>`;
-  return `<div class="${cls}">${lab}<div class="row"><input type="range" id="rg-${x.id}" data-id="${x.id}" min="${x.min}" max="${x.max}" step="${x.step}" value="${v}" ${x.showIf && !x.showIf(p) ? 'disabled' : ''} aria-label="${esc(x.label)}"><input type="number" id="in-${x.id}" data-id="${x.id}" min="${x.min}" max="${x.max}" step="${x.step}" value="${v}" ${x.showIf && !x.showIf(p) ? 'disabled' : ''}></div>${help}</div>`;
+  if (x.type === 'select') return `<div class="${cls}">${lab}<select id="in-${x.id}" data-id="${x.id}" ${dis ? 'disabled' : ''}>${x.options.map(([ov, ol]) => `<option value="${ov}" ${String(ov) === String(v) ? 'selected' : ''}>${esc(ol)}</option>`).join('')}</select>${help}</div>`;
+  if (x.type === 'text') return `<div class="${cls}">${lab}<input type="text" id="in-${x.id}" data-id="${x.id}" value="${esc(v)}" ${dis ? 'disabled' : ''}>${help}</div>`;
+  if (x.type === 'checkbox') return `<div class="${cls}" style="grid-column:1/-1"><label class="checkrow"><input type="checkbox" id="in-${x.id}" data-id="${x.id}" ${v ? 'checked' : ''} ${dis ? 'disabled' : ''}><span>${esc(x.label)}</span></label>${help}</div>`;
+  if (x.type === 'jobs') return `<div class="field" style="grid-column:1/-1"><label>${esc(x.label)}</label><table class="jobs"><thead><tr><th>Job</th><th>Processing (days)</th><th>Due day</th></tr></thead><tbody>${v.map((j, i) => `<tr><td><b>${j.id}</b></td><td><input type="number" min="1" max="30" step="1" data-job="${i}" data-f="p" value="${j.p}" ${locked ? 'disabled' : ''}></td><td><input type="number" min="1" max="120" step="1" data-job="${i}" data-f="d" value="${j.d}" ${locked ? 'disabled' : ''}></td></tr>`).join('')}</tbody></table></div>`;
+  return `<div class="${cls}">${lab}<div class="row"><input type="range" id="rg-${x.id}" data-id="${x.id}" min="${x.min}" max="${x.max}" step="${x.step}" value="${v}" ${dis ? 'disabled' : ''} aria-label="${esc(x.label)}"><input type="number" id="in-${x.id}" data-id="${x.id}" min="${x.min}" max="${x.max}" step="${x.step}" value="${v}" ${dis ? 'disabled' : ''}></div>${help}</div>`;
 }
 
 function readInputs(t) {
@@ -1350,6 +1453,9 @@ function readInputs(t) {
 
 function renderTopic(t) {
   const p = state.inputs[t.id], runs = state.runs[t.id], run = lastRun(t.id);
+  const isCamp = state.mode[t.id] === 'campaign', camp = state.camp[t.id];
+  const campActive = isCamp && camp && camp.rounds.length < camp.n, campDone = isCamp && camp && camp.rounds.length >= camp.n;
+  const nextRound = campActive ? campaignRound(t, camp.period, camp.rounds.length) : null;
   const dec = t.params.filter(x => x.role === 'decision'), scn = t.params.filter(x => x.role === 'scenario');
   const learnOpen = runs.length === 0 ? 'open' : '';
   let html = `<section class="card">
@@ -1357,26 +1463,28 @@ function renderTopic(t) {
     <details class="learn" ${learnOpen}><summary>Concept &amp; formulas</summary>
       <div class="learn-grid"><div>${t.concept}</div><div class="formula">${t.formulas.map(([a, b]) => `<div><b>${esc(a)}</b>${esc(b)}</div>`).join('')}</div></div>
     </details>
+    <div class="seg" role="group" aria-label="Mode"><button id="modeSingle" class="${isCamp ? '' : 'on'}">Single runs (sandbox)</button><button id="modeCamp" class="${isCamp ? 'on' : ''}">Campaign: quarters or years</button></div>
   </section>
-  <section class="card"><h3>Your decisions &amp; scenario<span class="sub">Blue fields are your decisions. The rest describe the scenario.</span></h3>
+  ${isCamp ? campaignHTML(t) : ''}
+  <section class="card"><h3>Your decisions &amp; scenario<span class="sub">${campActive ? `Set your decisions for ${esc(nextRound.label)}. The round sets the scenario.` : 'Blue fields are your decisions. The rest describe the scenario.'}</span></h3>
     <div class="inputs" id="inputs">
       <div class="ingroup">Decisions <span class="tag dec">you control</span></div>
       ${dec.map(x => fieldHTML(t, x, p)).join('')}
-      <div class="ingroup">Scenario <span class="tag scn">environment</span></div>
-      ${scn.map(x => fieldHTML(t, x, p)).join('')}
+      <div class="ingroup">Scenario <span class="tag scn">${isCamp && camp ? 'set by the round' : 'environment'}</span></div>
+      ${scn.map(x => campActive && nextRound.hidden.includes(x.id) ? `<div class="field locked"><label><span>${esc(x.label)}</span>${x.unit ? `<span class="u">${esc(x.unit)}</span>` : ''}</label><div class="small muted" style="padding:6px 0">Unknown until you play this round</div></div>` : fieldHTML(t, x, p, isCamp && !!camp)).join('')}
     </div>
     <div class="actions">
-      <button class="btn primary" id="runBtn">${runs.length ? '▶ Run again' : '▶ Run simulation'}</button>
+      <button class="btn primary" id="runBtn" ${isCamp && !campActive ? 'disabled' : ''}>${campActive ? `▶ Play ${esc(nextRound.label)} (round ${camp.rounds.length + 1} of ${camp.n})` : isCamp ? (campDone ? 'Campaign finished' : 'Start a campaign above') : runs.length ? '▶ Run again' : '▶ Run simulation'}</button>
       <button class="btn" id="resetBtn" title="Restore default inputs and clear this topic's runs">↺ Reset topic</button>
       <span class="err" id="err">${esc(state.errors[t.id] || '')}</span>
-      <span class="small muted" style="margin-left:auto">${runs.length ? `Run #${runs.length} done · ${runs.length} run(s) in history` : 'Defaults are ready. Press Run.'}</span>
+      <span class="small muted" style="margin-left:auto">${campActive ? 'One play per round: decide carefully.' : runs.length ? `Run #${runs.length} done · ${runs.length} run(s) in history` : 'Defaults are ready. Press Run.'}</span>
     </div>
   </section>`;
   if (!run) {
     html += `<section class="card"><h3>Results</h3><div class="empty">No runs yet. Adjust your decisions (or keep the defaults) and press <b>Run simulation</b>.<br>KPIs, charts, before/after comparison and the agent's report appear here.</div></section>`;
   } else {
     const prev = run.prev, a = run.analysis, b = a.best;
-    html += `<section class="card"><h3>Key performance indicators<span class="sub">Run #${run.n} · change vs ${prev.label}</span></h3><div class="kpis">${t.kpis.map(k => kpiCard(k, run.r, prev.r)).join('')}</div></section>
+    html += `<section class="card"><h3>Key performance indicators<span class="sub">${run.round ? esc(run.round.label) : 'Run #' + run.n} · change vs ${prev.label}</span></h3><div class="kpis">${t.kpis.map(k => kpiCard(k, run.r, prev.r)).join('')}</div></section>
     <section class="card"><h3>${esc(t.chartTitle)}</h3><div class="chartwrap">${t.chart(run.r, b.r)}</div></section>
     <section class="card"><h3>Before / after comparison<span class="sub">Before = ${esc(prev.label)}</span></h3><div class="scroll-x"><table class="tbl">
       <thead><tr><th>KPI</th><th class="n">Before</th><th class="n">After (this run)</th><th class="n">Change</th><th class="n">AI recommended</th></tr></thead><tbody>
@@ -1417,7 +1525,7 @@ function historyTable(t) {
   if (!runs.length) return '<div class="empty">Each run is logged here with what you changed and how the main KPI moved.</div>';
   const k = t.kpis.find(k => k.key === t.objective.key);
   return `<div class="scroll-x"><table class="tbl"><thead><tr><th>#</th><th>Decisions</th><th>What changed</th><th class="n">${esc(k.label)}</th><th class="n">vs previous</th><th class="n">% of AI best</th>${ROOM.student ? '<th class="n">Class</th>' : ''}</tr></thead><tbody>${
-    runs.slice().reverse().map(r => `<tr><td>${r.n}</td><td>${esc(t.describe(r.p))}</td><td>${r.changes.length ? r.changes.map(c => `<span class="chg" ${c.role === 'scenario' ? 'title="Scenario change"' : ''}>${c.role === 'scenario' ? '⚑ ' : ''}${esc(c.text)}</span>`).join('') : '<span class="muted">' + (r.n === 1 ? 'First run' : 'No changes') + '</span>'}</td><td class="n"><b>${fmtV(k.fmt, r.r[k.key])}</b></td><td class="n">${r.n === 1 ? '<span class="flat">—</span>' : deltaHTML(k, r.r[k.key], runs[r.n - 2].r[k.key])}</td><td class="n">${F.pct(r.analysis.eff)}</td>${ROOM.student ? `<td class="n" id="sync-${t.id}-${r.n}">${syncBadge(r)}</td>` : ''}</tr>`).join('')
+    runs.slice().reverse().map(r => `<tr><td>${r.n}${r.round ? `<div class="small muted">${esc(r.round.label)}</div>` : ''}</td><td>${esc(t.describe(r.p))}</td><td>${r.changes.length ? r.changes.map(c => `<span class="chg" ${c.role === 'scenario' ? 'title="Scenario change"' : ''}>${c.role === 'scenario' ? '⚑ ' : ''}${esc(c.text)}</span>`).join('') : '<span class="muted">' + (r.n === 1 ? 'First run' : 'No changes') + '</span>'}</td><td class="n"><b>${fmtV(k.fmt, r.r[k.key])}</b></td><td class="n">${r.n === 1 ? '<span class="flat">—</span>' : deltaHTML(k, r.r[k.key], runs[r.n - 2].r[k.key])}</td><td class="n">${F.pct(r.analysis.eff)}</td>${ROOM.student ? `<td class="n" id="sync-${t.id}-${r.n}">${syncBadge(r)}</td>` : ''}</tr>`).join('')
   }</tbody></table></div><p class="small muted" style="margin:8px 0 0">⚑ = scenario change. Compare decisions under the same scenario for a fair test.</p>`;
 }
 
@@ -1442,7 +1550,7 @@ function renderAI(t) {
   const changes = run.changes;
   const prevK = run.prev.r[k.key];
   let html = head;
-  html += `<div class="ai-section"><h4>Run #${run.n} report</h4><div class="score"><div><div class="big">${effPct.toFixed(1)}%</div><div class="small muted">of best option found</div></div><div style="flex:1"><div class="small"><b>You:</b> ${fmtV(k.fmt, run.r[k.key])} · <b>Best:</b> ${fmtV(k.fmt, b.r[k.key])}</div><div class="meter"><i style="width:${clamp(effPct, 0, 100)}%"></i></div></div></div></div>`;
+  html += `<div class="ai-section"><h4>${run.round ? esc(run.round.label) + ' round' : 'Run #' + run.n} report</h4><div class="score"><div><div class="big">${effPct.toFixed(1)}%</div><div class="small muted">of best option found</div></div><div style="flex:1"><div class="small"><b>You:</b> ${fmtV(k.fmt, run.r[k.key])} · <b>Best:</b> ${fmtV(k.fmt, b.r[k.key])}</div><div class="meter"><i style="width:${clamp(effPct, 0, 100)}%"></i></div></div></div></div>`;
   html += `<div class="ai-section"><h4>Decision tracking</h4><div class="log">${run.n === 1 ? `<div>First run, compared with the default baseline.</div>` : ''}${changes.length ? changes.map(c => `<div>${c.role === 'scenario' ? '⚑ Scenario: ' : 'You changed '}${esc(c.text)}</div>`).join('') : run.n > 1 ? '<div>No inputs changed since the last run (same result: the engine is deterministic).</div>' : ''}<div>${esc(k.label)}: ${fmtV(k.fmt, prevK)} → <b>${fmtV(k.fmt, run.r[k.key])}</b> ${deltaHTML(k, run.r[k.key], prevK)}</div></div></div>`;
   html += `<div class="ai-section"><h4>Diagnosis</h4>${a.issues.map(i => `<div class="issue ${i.sev}"><span class="ic">${i.sev === 'high' ? '!' : i.sev === 'med' ? '▲' : '✓'}</span><div><b>${esc(i.title)}</b>${esc(i.text)}</div></div>`).join('')}</div>`;
   if (a.isOptimal) {
@@ -1485,8 +1593,16 @@ function activityCard() {
   return `<div class="card"><h3>Agent activity log<span class="sub">all topics</span></h3>${items.length ? `<div class="log">${items.map(h => `<div><span class="mono">${h.time.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', second: '2-digit'})}</span> · <b>${esc(h.topic)}</b> ${esc(h.text)}</div>`).join('')}</div>` : '<p class="small muted" style="margin:0">Nothing logged yet.</p>'}</div>`;
 }
 
+function applyRoundScenario(t) {
+  const c = state.camp[t.id]; if (!c || c.rounds.length >= c.n) return;
+  Object.assign(state.inputs[t.id], JSON.parse(JSON.stringify(campaignRound(t, c.period, c.rounds.length).scenario)));
+}
 function runSimulation(t) {
+  const camp = state.mode[t.id] === 'campaign' ? state.camp[t.id] : null;
+  if (state.mode[t.id] === 'campaign' && (!camp || camp.rounds.length >= camp.n)) return null;
   const p = readInputs(t);
+  const rd = camp ? campaignRound(t, camp.period, camp.rounds.length) : null;
+  if (rd) Object.assign(p, JSON.parse(JSON.stringify(rd.scenario)));
   const err = t.validate ? t.validate(p) : null;
   state.errors[t.id] = err || '';
   if (err) { $('#err').textContent = err; return null; }
@@ -1495,10 +1611,16 @@ function runSimulation(t) {
   const runs = state.runs[t.id];
   const prevRun = runs[runs.length - 1];
   const base = defaults(t);
-  const prev = prevRun ? {label: 'previous run (#' + prevRun.n + ')', p: prevRun.p, r: prevRun.r} : {label: 'default baseline', p: base, r: t.simulate(base)};
+  const prev = prevRun ? {label: prevRun.round ? 'previous round (' + prevRun.round.label + ')' : 'previous run (#' + prevRun.n + ')', p: prevRun.p, r: prevRun.r} : {label: 'default baseline', p: base, r: t.simulate(base)};
   const analysis = Agent.analyze(t, snap, r);
   const run = {n: runs.length + 1, p: snap, r, prev, analysis, changes: changesText(t, prev.p, snap), time: new Date()};
   runs.push(run);
+  if (rd) {
+    run.round = {period: camp.period, k: rd.k, label: rd.label};
+    camp.rounds.push({k: rd.k, label: rd.label, events: [...rd.events, ...rd.reveal], p: snap, r, bestP: analysis.best.p, bestR: analysis.best.r,
+      value: campaignValue(t, r, snap, camp.period), bestValue: campaignValue(t, analysis.best.r, analysis.best.p, camp.period), eff: analysis.eff});
+    applyRoundScenario(t);
+  }
   const k = t.kpis.find(k => k.key === t.objective.key);
   logActivity(t, `Run #${run.n}: ${t.describe(snap)} → ${k.label} ${fmtV(k.fmt, r[k.key])}; tested ${analysis.evaluated} alternatives (${F.pct(analysis.eff)} of best)`);
   if (ROOM.student) setTimeout(() => submitRun(t, run), 0);
@@ -1512,7 +1634,56 @@ function bindInputs(t) {
   $$('#inputs select, #inputs input[type=checkbox]').forEach(el => el.addEventListener('change', () => { readInputs(t); if (t.params.some(x => x.showIf)) { renderMain(); } }));
   $$('#inputs input[type=range]').forEach(rg => rg.addEventListener('change', () => readInputs(t)));
   $('#runBtn').onclick = () => { const run = runSimulation(t); if (run) { render(); } };
-  $('#resetBtn').onclick = () => { state.inputs[t.id] = defaults(t); state.runs[t.id] = []; state.adviceOpen[t.id] = false; state.errors[t.id] = ''; logActivity(t, 'Topic reset to defaults'); render(); };
+  $('#resetBtn').onclick = () => { state.inputs[t.id] = defaults(t); state.runs[t.id] = []; state.adviceOpen[t.id] = false; state.errors[t.id] = ''; state.camp[t.id] = null; logActivity(t, 'Topic reset to defaults'); render(); };
+  const scenarioDefaults = () => { const d = defaults(t); t.params.filter(x => x.role === 'scenario').forEach(x => { state.inputs[t.id][x.id] = d[x.id]; }); };
+  $('#modeSingle').onclick = () => { if (state.mode[t.id] === 'single') return; readInputs(t); state.mode[t.id] = 'single'; scenarioDefaults(); render(); };
+  $('#modeCamp').onclick = () => { if (state.mode[t.id] === 'campaign') return; readInputs(t); state.mode[t.id] = 'campaign'; applyRoundScenario(t); render(); };
+  const cs = $('#campStart'); if (cs) cs.onclick = () => {
+    readInputs(t); const [period, n] = $('#campPlan').value.split(':');
+    state.camp[t.id] = {period, n: +n, rounds: []}; applyRoundScenario(t);
+    logActivity(t, `Campaign started: ${PERIODS[period].label}, ${n} rounds`); render();
+  };
+  const cn = $('#campNew'); if (cn) cn.onclick = () => { state.camp[t.id] = null; scenarioDefaults(); render(); };
+}
+function campaignHTML(t) {
+  const c = state.camp[t.id], k = t.kpis.find(x => x.key === t.objective.key), cfg = CAMPAIGN[t.id];
+  if (!c) return `<section class="card" id="campCard"><h3>Campaign setup</h3>
+    <p class="small muted" style="margin-top:0">Manage this operation over several periods. Each round brings new conditions: growth, seasonality, cost changes and shocks. You set your decisions once per round, and decisions carry over to the next round. Each result is scaled to the period (${esc(k.label.toLowerCase())} per ${esc(cfg.unit)} × ${cfg.mult.quarter} per quarter, or × ${cfg.mult.year} per year), and your campaign total is compared with the AI's best plan for every round. The AI benchmark uses hindsight: it optimizes each round knowing exactly what happened, so 100% is not always reachable.</p>
+    <div class="actions"><select id="campPlan" aria-label="Campaign length" style="border:1px solid var(--line);background:var(--panel-2);color:var(--ink);border-radius:7px;padding:6px 8px;font:inherit">
+      ${Object.entries(PERIODS).flatMap(([id, pp]) => pp.rounds.map(n => `<option value="${id}:${n}">${pp.label}: ${n} ${id === 'quarter' ? 'quarters' : 'years'}${id === 'quarter' ? ` (${n / 4} year${n > 4 ? 's' : ''})` : ''}</option>`)).join('')}
+    </select><button class="btn primary" id="campStart">Start campaign</button></div></section>`;
+  const played = c.rounds, done = played.length >= c.n, mult = cfg.mult[c.period], per = c.period === 'quarter' ? 'quarter' : 'year';
+  const you = sum(played.map(r => r.value)), ai = sum(played.map(r => r.bestValue));
+  const eff = played.length ? Agent.efficiency(t, {[k.key]: you}, {[k.key]: ai}) : null;
+  const chips = Array.from({length: c.n}, (_, i) => { const lb = roundLabel(c.period, i); const st = i < played.length ? 'done' : i === played.length ? 'now' : ''; return `<span class="rchip ${st}" title="${esc(lb)}">${i < played.length ? '✓ ' : i === played.length ? '▶ ' : ''}${esc(lb)}${i < played.length ? ` · ${F.pct(played[i].eff)}` : ''}</span>`; }).join('');
+  let brief = '';
+  if (!done) {
+    const nr = campaignRound(t, c.period, played.length);
+    const prevScen = played.length ? campaignRound(t, c.period, played.length - 1).scenario : paramDefaults(t);
+    const diffs = changesText(t, {...state.inputs[t.id], ...prevScen}, {...state.inputs[t.id], ...nr.scenario}).filter(d => d.role === 'scenario' && !nr.hidden.includes(d.id));
+    brief = `<div class="rec" style="margin-top:10px"><div class="name">Round ${played.length + 1} of ${c.n}: ${esc(nr.label)}</div>
+      ${nr.events.length ? `<ul class="clean small">${nr.events.map(e => `<li>${esc(e)}</li>`).join('')}</ul>` : '<p class="small" style="margin:4px 0">Starting conditions: the standard scenario.</p>'}
+      ${diffs.length ? `<div class="small" style="margin-top:6px"><b>Changes vs ${played.length ? 'last round' : 'the standard scenario'}:</b> ${diffs.map(d => `<span class="chg">${esc(d.text)}</span>`).join('')}</div>` : ''}
+      <p class="small muted" style="margin:6px 0 0">Set your decisions below, then press Play. Results for this ${per} = ${esc(k.label.toLowerCase())} per ${esc(cfg.unit)} × ${mult}.</p></div>`;
+  }
+  const kp = (l, v, cls = '') => `<div class="kpi ${cls}"><div class="l">${l}</div><div class="v">${v}</div></div>`;
+  const tiles = played.length ? `<div class="kpis" style="margin-top:12px">${kp(`Your total ${esc(k.label.toLowerCase().replace(/^total /, ''))}`, fmtV(k.fmt, you), 'primary')}${kp('AI best plan total (hindsight)', fmtV(k.fmt, ai))}${kp('Campaign score (% of AI best)', F.pct(eff))}${kp('Rounds played', `${played.length} / ${c.n}`)}</div>` : '';
+  const short = r => c.period === 'quarter' ? `Q${r.k % 4 + 1}${c.n > 4 ? '·Y' + (Math.floor(r.k / 4) + 1) : ''}` : `Y${r.k + 1}`;
+  const chart = played.length ? `<h3 style="margin-top:14px">${esc(k.label)} per ${per}</h3>` + legend([['You', 'var(--you)'], ['AI best plan for that round (hindsight)', 'var(--ai)']]) +
+    `<div class="chartwrap">${barGroups({categories: played.map(short), series: [{name: 'You', color: 'var(--you)', values: played.map(r => r.value)}, {name: 'AI best', color: 'var(--ai)', values: played.map(r => r.bestValue)}], yLabel: `$ per ${per}`, fmt: v => fmtV(k.fmt, v), unit: ''})}</div>` : '';
+  const table = played.length ? `<div class="scroll-x" style="margin-top:10px"><table class="tbl"><thead><tr><th>Round</th><th>Conditions</th><th>Your decisions</th><th class="n">You</th><th>AI best plan (hindsight)</th><th class="n">AI</th><th class="n">% of best</th></tr></thead><tbody>
+    ${played.map(r => `<tr><td><b>${esc(r.label)}</b></td><td class="small">${r.events.map(esc).join('<br>') || 'Standard scenario'}</td><td>${esc(t.describe(r.p))}</td><td class="n"><b>${fmtV(k.fmt, r.value)}</b></td><td>${esc(t.describe(r.bestP))}</td><td class="n">${fmtV(k.fmt, r.bestValue)}</td><td class="n">${F.pct(r.eff)}</td></tr>`).join('')}
+    <tr><td colspan="3"><b>Campaign total</b></td><td class="n"><b>${fmtV(k.fmt, you)}</b></td><td></td><td class="n"><b>${fmtV(k.fmt, ai)}</b></td><td class="n"><b>${F.pct(eff)}</b></td></tr></tbody></table></div>` : '';
+  let summary = '';
+  if (done) {
+    const best = played.reduce((a, b) => (b.eff > a.eff ? b : a)), worst = played.reduce((a, b) => (b.eff < a.eff ? b : a));
+    const gap = Math.abs(ai - you);
+    summary = `<div class="callout"><b>Campaign complete.</b> You reached <b>${F.pct(eff)}</b> of the AI's best plan over ${c.n} ${per}s, ${t.objective.dir === 'max' ? 'leaving' : 'spending'} ${fmtV(k.fmt, gap)} ${t.objective.dir === 'max' ? 'on the table' : 'more than needed'}. Best round: ${esc(best.label)} (${F.pct(best.eff)}). Hardest round: ${esc(worst.label)} (${F.pct(worst.eff)})${worst.events.length ? `, when ${esc(worst.events[0].charAt(0).toLowerCase() + worst.events[0].slice(1)).replace(/\.$/, '')}` : ''}.</div>
+      <div class="actions"><button class="btn primary" id="campNew">Start a new campaign</button></div>`;
+  }
+  return `<section class="card" id="campCard"><h3>Campaign · ${esc(PERIODS[c.period].label)}, ${c.n} rounds<span class="sub">value per ${per} = ${esc(k.label.toLowerCase())} per ${esc(cfg.unit)} × ${mult}</span></h3>
+    <div class="rchips">${chips}</div>${brief}${tiles}${chart}${table}${summary}
+    ${!done ? '<div class="actions"><button class="btn ghost small" id="campNew">Abandon campaign</button></div>' : ''}</section>`;
 }
 
 function renderMain() {
@@ -1561,6 +1732,9 @@ function reportHTML() {
       <div class="two" style="margin-top:8px"><div><b class="small">Mistakes &amp; inefficiencies found</b><ul class="clean small">${mistakes.size ? [...mistakes.values()].map(m => `<li>${esc(m.title)} <span class="muted">(run${m.runs.length > 1 ? 's' : ''} ${m.runs.join(', ')})</span></li>`).join('') : '<li>None flagged.</li>'}</ul>
         ${setbacks.length ? `<b class="small">Setbacks</b><ul class="clean small">${setbacks.map(s => `<li>${esc(s)}</li>`).join('')}</ul>` : ''}</div>
       <div><b class="small">Improvements</b><ul class="clean small">${improvements.length ? improvements.map(s => `<li>${esc(s)}</li>`).join('') : '<li>No run-to-run improvements yet. Try the agent\'s advice.</li>'}</ul></div></div>
+      ${(() => { const c = state.camp[t.id]; if (!c || !c.rounds.length) return '';
+        const you = sum(c.rounds.map(r => r.value)), ai = sum(c.rounds.map(r => r.bestValue)), eff = Agent.efficiency(t, {[k.key]: you}, {[k.key]: ai});
+        return `<div style="margin-top:8px"><b class="small">Campaign (${esc(PERIODS[c.period].label.toLowerCase())}, ${c.rounds.length} of ${c.n} rounds played)</b><table class="tbl"><thead><tr><th>Round</th><th>Your decisions</th><th class="n">You</th><th class="n">AI best</th><th class="n">% of best</th></tr></thead><tbody>${c.rounds.map(r => `<tr><td>${esc(r.label)}</td><td>${esc(t.describe(r.p))}</td><td class="n">${fmtV(k.fmt, r.value)}</td><td class="n">${fmtV(k.fmt, r.bestValue)}</td><td class="n">${F.pct(r.eff)}</td></tr>`).join('')}<tr><td colspan="2"><b>Total</b></td><td class="n"><b>${fmtV(k.fmt, you)}</b></td><td class="n"><b>${fmtV(k.fmt, ai)}</b></td><td class="n"><b>${F.pct(eff)}</b></td></tr></tbody></table></div>`; })()}
       <div style="margin-top:8px"><b class="small">Lessons learned</b><ul class="clean small">${[...lessons].map(l => `<li>${esc(l)}</li>`).join('')}</ul></div>
       ${last.analysis.isOptimal ? '' : `<p class="small"><b>Agent's closing advice:</b> ${t.explain(last.p, last.r, last.analysis.best)}</p>`}
     </div>`;
@@ -1594,6 +1768,8 @@ function guideHTML() {
     <li><b>Queues:</b> Why does going from 4 to 5 servers cut waiting so much more than going from 5 to 6?</li>
     <li><b>Disruption:</b> Set duration to 0. Which strategy wastes the most money? How do you price resilience?</li>
     <li><b>Process time:</b> Why does halving the batch size first cut lead time and then suddenly make it explode? What does SMED change? What share of the lead time is value-added?</li></ul>
+  <h3>Campaign mode (quarters or years)</h3>
+  <p>Each topic has a <b>Campaign</b> switch. Pick quarterly (4 or 8 quarters) or yearly (3 or 5 years). Every round brings a briefing with new conditions (growth, seasonality, cost changes, a launch, a recall, a supplier shutdown revealed only after the plan is committed). Students set decisions once per round. Results are scaled to the period and summed, and compared with the AI's best plan for each round (a hindsight benchmark). It works well as homework or a team competition: "Who runs the plant best over two years?" In the class room, official campaign rounds count for the leaderboard.</p>
   <h3>How the AI agent works</h3>
   <p>The agent is a <b>rule-based, deterministic</b> expert system that runs in the browser. No LLM is used, and the label in the header says so. After every run it:</p>
   <ol><li><b>Tracks</b> the decisions you changed and the resulting KPI movement.</li>
@@ -1735,7 +1911,11 @@ function runTool(t, name, input) {
       latest_run: run ? {decisions: t.describe(run.p), kpis: kpiDump(t, run.r, run.p), diagnosis: run.analysis.issues.map(i => `${i.title}: ${i.text}`),
         share_of_best_option: F.pct(run.analysis.eff),
         rule_based_best: {option: run.analysis.best.name, decisions: t.describe(run.analysis.best.p), kpis: kpiDump(t, run.analysis.best.r, run.analysis.best.p)}} : null,
-      inputs_differ_from_latest_run: run ? JSON.stringify(run.p) !== JSON.stringify(cur) : null}};
+      inputs_differ_from_latest_run: run ? JSON.stringify(run.p) !== JSON.stringify(cur) : null,
+      campaign: state.mode[t.id] === 'campaign' && state.camp[t.id] ? (() => { const c = state.camp[t.id]; const nr = c.rounds.length < c.n ? campaignRound(t, c.period, c.rounds.length) : null;
+        return {period: c.period, rounds: c.n, played: c.rounds.map(r => ({round: r.label, decisions: t.describe(r.p), value: fmtV(obj.fmt, r.value), ai_best: fmtV(obj.fmt, r.bestValue), share_of_best: F.pct(r.eff)})),
+          next_round: nr ? {round: nr.label, events: nr.events, note: 'Scenario inputs are already set to this round. run_simulation uses them.'} : null,
+          value_per_period: `${obj.label} per ${CAMPAIGN[t.id].unit} × ${CAMPAIGN[t.id].mult[c.period]}`}; })() : null}};
   }
   if (name === 'run_simulation') {
     const {p, errors} = applyChanges(t, cur, input.changes);
@@ -2043,13 +2223,13 @@ async function submitRun(t, run) {
   const s = ROOM.student; if (!s) return;
   run.sync = 'pending'; updateSyncCell(t, run);
   try {
-    const out = await roomApi(s.server, `/api/rooms/${s.code}/runs`, {method: 'POST', body: {roll: s.roll, token: s.token, topic: t.id, p: run.p, n: run.n}});
+    const out = await roomApi(s.server, `/api/rooms/${s.code}/runs`, {method: 'POST', body: {roll: s.roll, token: s.token, topic: t.id, p: run.p, n: run.n, round: run.round ? {period: run.round.period, k: run.round.k} : undefined}});
     run.sync = out.recorded && !out.recorded.fair ? 'custom' : 'ok';
     s.standing = {rank: out.rank, of: out.of, score: out.score, perTopic: out.perTopic};
     await flushPending();
   } catch (e) {
     run.sync = 'fail'; run.syncErr = e.message;
-    if (!e.status || e.status >= 500) { s.pending = s.pending || []; s.pending.push({topic: t.id, p: run.p, n: run.n}); }
+    if (!e.status || e.status >= 500) { s.pending = s.pending || []; s.pending.push({topic: t.id, p: run.p, n: run.n, round: run.round ? {period: run.round.period, k: run.round.k} : undefined}); }
     if (e.status === 401) s.needsRejoin = true;
   }
   saveRoom(); updateSyncCell(t, run); renderRoomPill();

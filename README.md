@@ -17,6 +17,19 @@ A classroom simulator for MBA Operations Management / Operations Analytics, deli
 
 Each topic has adjustable inputs with working defaults, **Run / Run again**, **Reset topic**, KPI cards, a chart, a before/after table, a decision history, and a concept and formulas panel.
 
+### Campaign mode (quarters or years)
+Every topic can also be played as a **multi-round campaign**: quarterly (4 or 8 quarters) or yearly (3 or 5 years). Each round has a briefing with new conditions: growth, Q4 seasonal peaks, inflation, a new product launch, a lead-time shock, a recall, a new operator re-rated by time study, or a supplier shutdown that is revealed only after you commit your plan. Decisions carry over; scenario inputs are set by the round. Each round is played once, and its result is scaled to the period (e.g. profit per shift × 63 shifts per quarter or × 250 per year). The campaign total is compared with the AI's best plan for each round (with hindsight), shown as a round-by-round table, a chart, a final summary, and a section in the session report. In the class room, official campaign rounds count for the leaderboard.
+
+| Topic | Value per round |
+|---|---|
+| Bottleneck | profit per shift × 63 (quarter) / 250 (year) |
+| Inventory | cost per 90-day run × 1 / 4 |
+| Scheduling | penalty per weekly schedule × 13 / 52 |
+| Quality | cost of quality per weekly batch × 13 / 52 |
+| Queues | cost per hour × 504 / 2,000 |
+| Supply chain | cost per 60-day window × 1.5 / 6 |
+| Process time | cost per day × 63 / 250 |
+
 ## AI Operations Agent
 A **rule-based, deterministic** agent (no LLM; labelled in the UI). After every run it tracks your decisions, diagnoses inefficiencies, tests alternatives with the same engine (heuristics plus exhaustive or grid search), ranks them, recommends the best one and explains the trade-offs. It never interrupts: detailed advice appears only when you press **Get AI advice**. The **Session report** lists decisions, mistakes, improvements and lessons, and can be printed or saved as PDF.
 

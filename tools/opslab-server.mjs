@@ -34,7 +34,7 @@ function loadEngine() {
   const a = html.indexOf('/* ---------------- 1. Utilities'), b = html.indexOf('/* ---------------- 4. Charts');
   if (a < 0 || b < 0) throw new Error('Could not find the simulation engine inside opslab.html');
   const ctx = vm.createContext({performance, console});
-  vm.runInContext(html.slice(a, b) + '\nglobalThis.__ops = {TOPICS, TOPIC, Agent, fmtV};', ctx, {filename: 'opslab-engine.js'});
+  vm.runInContext(html.slice(a, b) + '\nglobalThis.__ops = {TOPICS, TOPIC, Agent, fmtV, campaignRound, CAMPAIGN, PERIODS};', ctx, {filename: 'opslab-engine.js'});
   return ctx.__ops;
 }
 const ENGINE = loadEngine();
@@ -65,6 +65,14 @@ function sanitize(t, raw) {
   }
   if (t.validate) { const e = t.validate(p); if (e) return {error: e}; }
   return {p};
+}
+// A campaign round is fair when its scenario matches that round's official conditions.
+function fairRound(t, p, rd) {
+  if (!rd || !ENGINE.CAMPAIGN[t.id] || !ENGINE.PERIODS[rd.period]) return false;
+  const k = Math.round(+rd.k), n = Math.max(...ENGINE.PERIODS[rd.period].rounds);
+  if (!(k >= 0 && k < n)) return false;
+  const sc = ENGINE.campaignRound(t, rd.period, k).scenario;
+  return t.params.filter(x => x.role === 'scenario').every(x => JSON.stringify(p[x.id]) === JSON.stringify(sc[x.id]));
 }
 const sameScenario = (t, p) => { const d = defaultsOf(t); return t.params.filter(x => x.role === 'scenario').every(x => JSON.stringify(p[x.id]) === JSON.stringify(d[x.id])); };
 
@@ -194,8 +202,9 @@ async function api(req, res, url) {
       const v = sanitize(t, b.p); if (v.error) return send(res, 400, {error: v.error});
       const r = t.simulate(v.p), a = ENGINE.Agent.analyze(t, v.p, r), k = t.kpis.find(k => k.key === t.objective.key);
       const list = s.runs[t.id] = s.runs[t.id] || [];
-      list.push({n: +b.n || list.length + 1, at: Date.now(), decisions: t.describe(v.p), value: r[k.key], valueText: ENGINE.fmtV(k.fmt, r[k.key]),
-        eff: a.eff, fair: sameScenario(t, v.p), issues: a.issues.filter(i => i.sev !== 'ok' && !IGNORE_ISSUES.has(i.code)).map(i => i.code)});
+      const rdOk = fairRound(t, v.p, b.round), rdLabel = rdOk ? (b.round.period === 'quarter' ? `Q${b.round.k % 4 + 1} Y${Math.floor(b.round.k / 4) + 1}` : `Year ${+b.round.k + 1}`) : '';
+      list.push({n: +b.n || list.length + 1, at: Date.now(), round: rdLabel || undefined, decisions: (rdLabel ? rdLabel + ': ' : '') + t.describe(v.p), value: r[k.key], valueText: ENGINE.fmtV(k.fmt, r[k.key]),
+        eff: a.eff, fair: sameScenario(t, v.p) || rdOk, issues: a.issues.filter(i => i.sev !== 'ok' && !IGNORE_ISSUES.has(i.code)).map(i => i.code)});
       if (list.length > MAX_RUNS_PER_TOPIC) list.splice(0, list.length - MAX_RUNS_PER_TOPIC);
       s.lastSeen = Date.now(); save();
     } else s.lastSeen = Date.now();

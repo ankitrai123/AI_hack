@@ -2,3 +2,4 @@ opslab-rooms.json
 node_modules/
 opslab-rooms.json.bak
 opslab-rooms.json.tmp
+*.whl

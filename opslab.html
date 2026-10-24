@@ -1736,6 +1736,15 @@ async function askLLM(t, question) {
   } catch (e) {
     if (chat.api.length === startLen + 1) chat.api.length = startLen; // the question never got an answer
     chat.view.push({role: 'error', text: e.message});
+    // Model retired or unknown: fetch the provider's current list and open the picker.
+    if (e.status === 404 || e.status === 410) {
+      try {
+        const c = LLM.cfg[LLM.provider]; c.liveModels = await loadModels();
+        LLM.settingsOpen = true;
+        LLM.modelMsg = {text: `“${a.model}” is not available. Pick one of the ${c.liveModels.length} current models below, then Save and ask again.`, err: true};
+        chat.view.push({role: 'tool', text: `Loaded ${c.liveModels.length} current models from ${a.label}. Pick one in Live LLM settings below.`});
+      } catch (e2) { chat.view.push({role: 'tool', text: 'Could not load the model list automatically: ' + e2.message}); }
+    }
   } finally { LLM.busy = false; refreshAI(t); }
 }
 
@@ -1794,7 +1803,7 @@ function chatHTML(t) {
     ${log ? `<div class="chat-log" id="chatLog">${log}${LLM.busy ? '<div class="msg tool dots">Agent is thinking and running simulations</div>' : ''}</div>` : `<div class="chips">${chips.map(c => `<button class="chip" data-q="${esc(c)}">${esc(c)}</button>`).join('')}</div>`}
     <div class="chat-in" style="margin-top:8px"><textarea id="chatInput" rows="2" placeholder="Ask for a suggestion, e.g. “Should I add a machine at B?”" ${LLM.busy ? 'disabled' : ''}>${esc(LLM.drafts[t.id] || '')}</textarea><button class="btn primary" id="chatSend" ${LLM.busy ? 'disabled' : ''}>Ask</button></div>
     <div style="display:flex;gap:10px;align-items:center;margin-top:4px">${chat.view.length ? '<button class="btn ghost small" id="chatClear">Clear chat</button>' : ''}<span class="small muted" style="margin-left:auto">Enter to send · Shift+Enter for a new line</span></div>
-    <details class="llm-set" id="llmSet" ${LLM.settingsOpen ? 'open' : ''}><summary>Live LLM settings</summary>
+    <details class="llm-set" id="llmSet" ${LLM.settingsOpen ? 'open' : ''}><summary>Live LLM settings <span class="muted" style="font-weight:500">(chat v3)</span></summary>
       <div class="row2"><select id="llmProvider" aria-label="Provider">${provOpts}</select></div>
       <div class="row2"><input id="llmModel" list="llmModels" placeholder="Model id" value="${esc(a.model)}" aria-label="Model id" style="flex:1;min-width:150px;border:1px solid var(--line);background:var(--panel-2);color:var(--ink);border-radius:7px;padding:5px 7px;font:inherit;font-size:12.5px"><datalist id="llmModels">${(a.liveModels || a.models).map(m => `<option value="${esc(m)}">`).join('')}</datalist><button class="btn small" id="llmLoad" title="Fetch the current model list from the provider (uses the key and proxy settings)">Load models</button></div>
       ${a.liveModels ? `<div class="row2"><select id="llmPick" aria-label="Available models"><option value="">${a.liveModels.length} models available: pick one…</option>${a.liveModels.map(m => `<option value="${esc(m)}" ${m === a.model ? 'selected' : ''}>${esc(m)}</option>`).join('')}</select></div>` : ''}

@@ -12,6 +12,8 @@
 // Only hosts in the allowlist are forwarded, and it listens on 127.0.0.1 only.
 import http from 'node:http';
 
+const VERSION = 'v3';
+
 const PORT = Number(process.env.PORT) || 8787;
 const ALLOWED = new Set([
   'integrate.api.nvidia.com', 'api.openai.com', 'api.groq.com', 'openrouter.ai',
@@ -40,9 +42,12 @@ http.createServer(async (req, res) => {
     const body = Buffer.from(await up.arrayBuffer());
     res.writeHead(up.status, {...cors, 'content-type': up.headers.get('content-type') || 'application/json'});
     res.end(body);
-    console.log(`${new Date().toLocaleTimeString()}  ${up.status}  ${host}${path}`);
+    let model = '';
+    if (req.method === 'POST') { try { model = JSON.parse(Buffer.concat(chunks).toString()).model || ''; } catch (e) {} }
+    console.log(`${new Date().toLocaleTimeString()}  ${up.status}  ${req.method} ${host}${path}${model ? '  model=' + model : ''}`);
+    if (up.status >= 400) console.log('          ' + body.toString().replace(/\s+/g, ' ').slice(0, 300));
   } catch (e) {
     res.writeHead(502, {...cors, 'content-type': 'application/json'});
     res.end(JSON.stringify({error: {message: `Proxy could not reach ${host}: ${e.message}`}}));
   }
-}).listen(PORT, '127.0.0.1', () => console.log(`OpsLab LLM proxy on http://localhost:${PORT}  (allowed: ${[...ALLOWED].join(', ')})`));
+}).listen(PORT, '127.0.0.1', () => console.log(`OpsLab LLM proxy ${VERSION} on http://localhost:${PORT}  (allowed: ${[...ALLOWED].join(', ')})`));

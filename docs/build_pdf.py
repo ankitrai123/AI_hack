@@ -138,7 +138,7 @@ s += [P('Optional class room', 'h2'),
              ['Live dashboard', 'Best % of optimum per student and topic, leaderboard (score out of 7), class first-run vs best-run averages, most common mistakes per topic, students not yet joined; refreshes every 10 s.'],
              ['Fair results', 'The server loads the simulation engine from opslab.html and re-computes every run from the submitted decisions; out-of-range inputs are rejected. Only standard-scenario runs count for the leaderboard.'],
              ['Identity', 'One device per roll number (token-based); the professor can reset a device. Roll numbers outside the class list are refused.'],
-             ['Robustness', 'Runs made while the server is unreachable are queued and sent later; data is saved to opslab-rooms.json; rooms can be closed and reopened.'],
+             ['Robustness', 'Runs made while the server is unreachable are queued and sent later; data is saved atomically to opslab-rooms.json with a .bak copy and flushed when the server stops (Ctrl+C is safe); rooms can be closed and reopened.'],
              ['Grading', 'CSV export with rank, roll, name, score, best % and runs per topic, including students who never joined.']], [W * 0.2, W * 0.8])]
 s += [P('5. Technologies', 'h1')]
 s += bullets(['One HTML5 file (about 2,100 lines) with embedded CSS and vanilla JavaScript. No frameworks, libraries, CDNs or network calls.',

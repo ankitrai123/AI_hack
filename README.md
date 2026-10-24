@@ -35,10 +35,10 @@ The **Analytics Agent** runs only the analyses the player asks for, checks each 
 
 ### Study Room (upload session slides)
 Students upload session material in almost any format: **PowerPoint (.pptx), PDF, Word (.docx), Excel (.xlsx), CSV, HTML, text/Markdown/RTF and images**, several at once. Files are read **in the browser** with built-in readers (no libraries): Office files are unzipped with the browser's DecompressionStream, and PDFs are parsed directly (fonts' Unicode maps, compressed and object streams, form XObjects, embedded JPEG images). Footers, dates and page numbers are skipped. Old binary .ppt/.doc/.xls files and scanned (image-only) PDFs get a clear message asking for the modern or text version. On the course decks exported to PDF, the PDF reader recovers 98–100% of the words that pypdf finds.
-- **📝 Notes:** slide-based study notes offline (sections, formulas, tables, code blocks, a glossary of key terms with slide references), or **AI study notes** written by the connected LLM (explained, cited by slide, with key takeaways). Downloadable as Markdown.
-- **🖼 Visual explanation:** a slide-by-slide viewer showing the slide's own images, a concept diagram (the slide structure offline, or an AI concept map with a plain-words explanation, an analogy and an example), and buttons to **practise the concept in the matching OpsLab simulation** (e.g. EOQ slides → Inventory, ARIMA slides → Time Series lab).
-- **❓ Quiz practice:** AI multiple-choice quizzes (concept, interpretation, calculation; validated, with explanations and slide references) or an offline fill-in-the-key-term quiz; score, best score, and "retry the ones I missed".
-- **💬 Ask for help:** questions are matched to the most relevant slides (TF-IDF), then answered by the LLM with slide citations. Offline, you get the matching slides and sentences.
+- **📝 Notes:** slide-based study notes built by the OpsLab Agent (sections, formulas, tables, code blocks, a glossary of key terms with slide references), or **AI study notes** written through the connected AI model (explained, cited by slide, with key takeaways). Downloadable as Markdown.
+- **🖼 Visual explanation:** a slide-by-slide viewer showing the slide's own images, a concept diagram (the slide structure, or an AI concept map with a plain-words explanation, an analogy and an example), and buttons to **practise the concept in the matching OpsLab simulation** (e.g. EOQ slides → Inventory, ARIMA slides → Time Series lab).
+- **❓ Quiz practice:** AI multiple-choice quizzes (concept, interpretation, calculation; validated, with explanations and slide references) or a fill-in-the-key-term quiz built by the agent; score, best score, and "retry the ones I missed".
+- **💬 Ask for help:** questions are matched to the most relevant slides (TF-IDF), then answered by the agent with slide citations. Without a model connected, the agent shows the matching slides and sentences.
 
 The LLM panel (including one-click **Ollama**) sits in the Study Room's side panel. Slide text is sent only when an AI button is pressed, and only to the chosen provider. With Ollama it never leaves the computer.
 
@@ -56,10 +56,10 @@ Every topic can also be played as a **multi-round campaign**: quarterly (4 or 8 
 | Process time | cost per day × 63 / 250 |
 
 ## AI Operations Agent
-A **rule-based, deterministic** agent (no LLM; labelled in the UI). After every run it tracks your decisions, diagnoses inefficiencies, tests alternatives with the same engine (heuristics plus exhaustive or grid search), ranks them, recommends the best one and explains the trade-offs. It never interrupts: detailed advice appears only when you press **Get AI advice**. The **Session report** lists decisions, mistakes, improvements and lessons, and can be printed or saved as PDF.
+The **OpsLab Agent** is deterministic: the same inputs always give the same advice. After every run it tracks your decisions, diagnoses inefficiencies, tests alternatives with the same engine (heuristics plus exhaustive or grid search), ranks them, recommends the best one and explains the trade-offs. It never interrupts: detailed advice appears only when you press **Get AI advice**. The **Session report** lists decisions, mistakes, improvements and lessons, and can be printed or saved as PDF.
 
 ### Optional live AI agent (chat), with any LLM provider
-The **Ask the AI agent** box lets students ask for suggestions in plain language. Under *Live LLM settings*, pick a provider, a model and a key:
+The **Ask the AI agent** box lets students ask for suggestions in plain language. Under *AI model settings*, pick a provider, a model and a key:
 
 | Provider | API format | Direct from browser? |
 |---|---|---|
@@ -75,26 +75,26 @@ The agent runs a tool-calling loop over four tools that call the real simulation
 
 | Tool | What it does |
 |---|---|
-| `get_current_state` | inputs, latest run KPIs, diagnosis, rule-based best option |
+| `get_current_state` | inputs, latest run KPIs, diagnosis, the agent's best option |
 | `run_simulation` | sandbox what-if on the real engine (never changes the student's inputs) |
-| `optimize` | rule-based grid/exhaustive search, optionally under a changed scenario |
+| `optimize` | the agent's grid/exhaustive search, optionally under a changed scenario |
 | `propose_settings` | shows an *Apply suggested settings* button; the student decides |
 
-The agent is told to quote only numbers returned by these tools. If a model can't do tool calling, OpsLab detects this and switches that chat to *grounded mode*: it sends the pre-computed simulator data with the question and has the model explain it. Without any LLM connected, the rule-based agent answers, so the basic demo needs no paid API.
+The agent is told to quote only numbers returned by these tools. If a model can't do tool calling, OpsLab detects this and switches that chat to *grounded mode*: it sends the pre-computed simulator data with the question and has the model explain it. Without a model connected, the OpsLab Agent answers from its own analysis, so the basic demo needs no paid API.
 
 **Local proxy (only for providers that block browser calls, such as NVIDIA):**
 ```
 node tools/llm-proxy.mjs        # Node 18+, no install; listens on http://localhost:8787
 ```
-Then tick *Use local proxy* in Live LLM settings. The proxy listens on localhost only and forwards only to an allowlist of provider hosts (add more with `EXTRA_HOSTS=host`).
+Then tick *Use local proxy* in AI model settings. The proxy listens on localhost only and forwards only to an allowlist of provider hosts (add more with `EXTRA_HOSTS=host`).
 
 Keys stay in the browser (or go through your own local proxy) and are sent only to the chosen provider. They are saved only if you tick *Remember keys*.
 
 ### Scenario Agent (one agent for every topic)
-Each topic has a **Scenario Agent** panel. Type an optional brief (e.g. *"monsoon floods hit a pharma plant in Vizag"*) and click **Generate case with AI**. The agent writes a case (title, short story, new scenario values) using whichever LLM is connected. Every value is checked against the input's valid range, unknown inputs are dropped, and decision inputs can never be changed. In **Campaign** setup, choose *Rounds: written by the Scenario Agent* to get a whole campaign (briefing and conditions per round) built around your theme. For the supply-chain topic the disruption stays hidden until the round is played. Without an LLM, **Random case** makes rule-based variations. Generated cases count as practice in a class room.
+Each topic has a **Scenario Agent** panel. Type an optional brief (e.g. *"monsoon floods hit a pharma plant in Vizag"*) and click **Generate case with AI**. The agent writes a case (title, short story, new scenario values) using whichever AI model is connected. Every value is checked against the input's valid range, unknown inputs are dropped, and decision inputs can never be changed. In **Campaign** setup, choose *Rounds: written by the Scenario Agent* to get a whole campaign (briefing and conditions per round) built around your theme. For the supply-chain topic the disruption stays hidden until the round is played. Without a model connected, **Random case** makes seeded variations with the agent's built-in generator. Generated cases count as practice in a class room.
 
 ### Ollama (free, local LLM)
-Click **Use Ollama (free)** in the Scenario Agent panel, or **🦙 Use Ollama** in Live LLM settings. OpsLab selects the Ollama provider, finds your installed models and picks a good chat model. Setup: install from ollama.com, run `ollama pull llama3.1`, then `OLLAMA_ORIGINS="*" ollama serve`. When students open OpsLab from the class server, Ollama requests go through the server, so **one Ollama on the professor's laptop serves the whole class**; `OLLAMA_ORIGINS` isn't needed then.
+Click **Use Ollama (free)** in the Scenario Agent panel, or **🦙 Use Ollama** in AI model settings. OpsLab selects the Ollama provider, finds your installed models and picks a good chat model. Setup: install from ollama.com, run `ollama pull llama3.1`, then `OLLAMA_ORIGINS="*" ollama serve`. When students open OpsLab from the class server, Ollama requests go through the server, so **one Ollama on the professor's laptop serves the whole class**; `OLLAMA_ORIGINS` isn't needed then.
 
 ### Optional class room (professor dashboard, roll numbers)
 Run OpsLab as a class with one command on the professor's laptop (Node 18+, nothing to install):

@@ -222,7 +222,7 @@ ul.clean li{margin:2px 0}
 .log div{padding:1px 0}
 .chg{display:inline-block;background:var(--panel-2);border:1px solid var(--line);border-radius:6px;padding:0 6px;margin:2px 4px 2px 0;font-size:11.5px}
 
-/* ---------- live LLM chat ---------- */
+/* ---------- agent chat ---------- */
 .chat-log{display:flex;flex-direction:column;gap:8px;max-height:420px;overflow-y:auto;margin:8px 0;padding-right:2px}
 .msg{font-size:12.8px;padding:8px 10px;border-radius:10px;max-width:92%;line-height:1.45;word-wrap:break-word}
 .msg.user{align-self:flex-end;background:var(--accent);color:var(--accent-ink)}
@@ -286,7 +286,7 @@ ul.clean li{margin:2px 0}
   </div>
   <div class="spacer"></div>
   <button class="pill" id="roomPill" hidden style="border:0;cursor:pointer" title="Open the class room page"></button>
-  <span class="pill" id="modePill" title="Simulation results and the built-in agent are deterministic and rule-based. The optional chat agent uses a live LLM (Claude) only if you add your own API key.">Rule-based agent · optional live LLM chat</span>
+  <span class="pill" id="modePill" title="The OpsLab Agent analyses every run with the simulation engine, so every number it reports is computed. Connect any AI model (Claude, NVIDIA, OpenAI, Groq, Gemini, Ollama…) for free-form conversation.">OpsLab Agent · connect any AI model</span>
   <button class="btn small" id="themeBtn" title="Toggle light/dark theme">◐ Theme</button>
   <button class="btn small" id="resetAllBtn" title="Clear all runs in all topics and restore defaults">Reset all</button>
 </header>
@@ -1281,7 +1281,7 @@ function campaignValue(t, r, p, period) {
 }
 
 
-/* ---------------- 3. AI Operations Agent (rule-based, deterministic) ---------------- */
+/* ---------------- 3. OpsLab Agent (deterministic analysis on the simulation engine) ---------------- */
 const Agent = {
   decisionKey(topic, p) {
     if (topic.decisionKey) return topic.decisionKey(p);
@@ -1682,7 +1682,7 @@ function historyTable(t) {
 
 function renderAI(t) {
   const side = $('#side');
-  const head = `<div class="card"><div class="ai-head"><div class="ai-badge">AI</div><div><h3>AI Operations Agent</h3><p><span class="status-dot"></span>Monitoring silently · rule-based (no LLM)</p></div></div>`;
+  const head = `<div class="card"><div class="ai-head"><div class="ai-badge">AI</div><div><h3>AI Operations Agent</h3><p><span class="status-dot"></span>Monitoring silently · reports after each run</p></div></div>`;
   if (!t) {
     const tot = sum(TOPICS.map(x => state.runs[x.id].length));
     side.innerHTML = head + `<p class="small muted" style="margin:12px 0 0">The agent has logged <b>${tot}</b> run(s) this session. Choose a topic to see its analysis.</p></div>` + activityCard();
@@ -1820,7 +1820,7 @@ function campaignHTML(t) {
       ${Object.entries(PERIODS).flatMap(([id, pp]) => pp.rounds.map(n => `<option value="${id}:${n}">${pp.label}: ${n} ${id === 'quarter' ? 'quarters' : 'years'}${id === 'quarter' ? ` (${n / 4} year${n > 4 ? 's' : ''})` : ''}</option>`)).join('')}
     </select>
     <select id="campSource" aria-label="Round conditions" style="border:1px solid var(--line);background:var(--panel-2);color:var(--ink);border-radius:7px;padding:6px 8px;font:inherit">
-      <option value="std">Rounds: standard script</option><option value="ai" ${llmLive() ? '' : 'disabled'}>Rounds: written by the Scenario Agent${llmLive() ? '' : ' (connect an LLM)'}</option></select>
+      <option value="std">Rounds: standard script</option><option value="ai" ${llmLive() ? '' : 'disabled'}>Rounds: written by the Scenario Agent${llmLive() ? '' : ' (connect an AI model)'}</option></select>
     <button class="btn primary" id="campStart" ${SCEN.busy ? 'disabled' : ''}>${SCEN.busy ? 'Scenario Agent is writing rounds…' : 'Start campaign'}</button></div>
     <input type="text" id="campTheme" placeholder="Optional campaign theme for the Scenario Agent, e.g. “EV battery start-up scaling up in Chennai”" value="${esc(SCEN.theme['camp-' + t.id] || '')}" style="width:100%;margin-top:8px;border:1px solid var(--line);background:var(--panel-2);color:var(--ink);border-radius:9px;padding:7px 9px;font:inherit;font-size:13px">
     ${SCEN.msg['camp-' + t.id] ? `<div class="msg ${SCEN.msg['camp-' + t.id].err ? 'error' : 'tool'}" style="margin-top:6px">${esc(SCEN.msg['camp-' + t.id].text)}</div>` : ''}
@@ -1880,7 +1880,7 @@ function render() {
 /* ---------------- 6. Session report & instructor guide ---------------- */
 function reportHTML() {
   const used = TOPICS.filter(t => state.runs[t.id].length);
-  let html = `<section class="card doc"><div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><div style="flex:1"><h2>End-of-run report</h2><p class="muted" style="margin:0">Prepared by the rule-based AI Operations Agent from your logged runs · ${new Date().toLocaleString()}</p></div><button class="btn primary noprint" id="printBtn">Print / save as PDF</button></div>`;
+  let html = `<section class="card doc"><div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><div style="flex:1"><h2>End-of-run report</h2><p class="muted" style="margin:0">Prepared by the OpsLab Agent from your logged runs · ${new Date().toLocaleString()}</p></div><button class="btn primary noprint" id="printBtn">Print / save as PDF</button></div>`;
   const ts = (state.tsaDone || []).length ? `<div class="rep-topic"><h3>${TOPICS.length + 1}. Time Series Analysis (ARIMA)</h3>${state.tsaDone.map((r, n) => `<p class="small" style="margin:10px 0 4px"><b>Lab ${n + 1}:</b> ${esc(r.name)}${r.mystery ? ' (mystery)' : ''}, sample ${r.seed}. True process ARIMA(${r.truth.join(',')}). Decisions correct: <b>${r.score}/8</b>. Chosen model ${r.chosen}, test MAPE ${r.mape.toFixed(2)}% (automatic AIC search ${r.bench}: ${r.benchMape.toFixed(2)}%).</p>
       <table class="tbl"><tbody>${TSA_STEPS.map((t, i) => { const g = r.grades[i + 1]; return `<tr><td>${i + 1}. ${esc(t)}</td><td class="${g && g.ok ? 'up' : 'down'}">${g ? (g.ok ? '✓' : '✗') : '–'}</td><td class="small">${g ? esc(g.text.replace(/^[✓✗] /, '')) : ''}</td></tr>`; }).join('')}</tbody></table>`).join('')}</div>` : '';
   if (!used.length) return html + (ts || `<div class="empty" style="margin-top:14px">No runs yet. Run at least one simulation and the report fills in automatically.</div>`) + '</section>';
@@ -1950,13 +1950,13 @@ function guideHTML() {
   <h3>Topic 8: Time Series Analysis lab</h3>
   <p>A stepwise lab that follows the ARIMA sessions: (1) visualise and judge stationarity, (2) run the ADF test and conclude, (3) choose a transformation, (4) re-test and confirm (or difference again), (5) read the ACF, (6) read the PACF, (7) specify and fit up to three ARIMA models (trained on 335 days, tested on the last 30), and (8) choose the model to forecast with. The Analytics Agent runs only the analyses students request and checks every decision against the evidence. It waits for the student and never advances on its own. Wrong choices are allowed and their consequences show up later, so students learn from the path they took. The debrief reveals the true generating process, an automatic AIC search, a scorecard and a 14-day forecast. The ADF, ACF and PACF numbers match Python statsmodels, so students can repeat the analysis in Colab using the CSV. Use “Mystery dataset” for an exam-style exercise and “New sample” to give each student different data.</p>
   <h3>Study Room</h3>
-  <p>Students upload your session .pptx in <b>Study Room</b> and get study notes, a slide viewer with visual explanations, quiz practice and slide-grounded Q&amp;A, plus buttons that open the matching OpsLab simulation. Files are read in the browser. Slide text goes only to the LLM the student connects (Ollama keeps it on their laptop). It works offline in a simpler, slide-based form. A good routine is to share the deck after class, ask students to score 80% or more on a quiz, and then play the linked simulation.</p>
+  <p>Students upload your session .pptx in <b>Study Room</b> and get study notes, a slide viewer with visual explanations, quiz practice and slide-grounded Q&amp;A, plus buttons that open the matching OpsLab simulation. Files are read in the browser. Slide text goes only to the AI model the student connects (Ollama keeps it on their laptop). Without an AI model connected, the agent still builds notes, quizzes and answers directly from the slides. A good routine is to share the deck after class, ask students to score 80% or more on a quiz, and then play the linked simulation.</p>
   <h3>Scenario Agent and Ollama</h3>
-  <p>Every topic has a <b>Scenario Agent</b>: type a brief (or leave it empty) and it writes a new case (title, story and scenario values), or a whole campaign when you pick “Rounds: written by the Scenario Agent”. Values are checked against each input's range and decisions are never changed. Without an LLM, <b>Random case</b> generates rule-based variations. For a free model, click <b>Use Ollama</b>. When students use the class server, your laptop's Ollama serves everyone. Use it to give each team a different case, or to localise cases to your students' industries.</p>
+  <p>Every topic has a <b>Scenario Agent</b>: type a brief (or leave it empty) and it writes a new case (title, story and scenario values), or a whole campaign when you pick “Rounds: written by the Scenario Agent”. Values are checked against each input's range and decisions are never changed. Without an AI model connected, <b>Random case</b> lets the agent generate variations itself. For a free model, click <b>Use Ollama</b>. When students use the class server, your laptop's Ollama serves everyone. Use it to give each team a different case, or to localise cases to your students' industries.</p>
   <h3>Campaign mode (quarters or years)</h3>
   <p>Each topic has a <b>Campaign</b> switch. Pick quarterly (4 or 8 quarters) or yearly (3 or 5 years). Every round brings a briefing with new conditions (growth, seasonality, cost changes, a launch, a recall, a supplier shutdown revealed only after the plan is committed). Students set decisions once per round. Results are scaled to the period and summed, and compared with the AI's best plan for each round (a hindsight benchmark). It works well as homework or a team competition: "Who runs the plant best over two years?" In the class room, official campaign rounds count for the leaderboard.</p>
   <h3>How the AI agent works</h3>
-  <p>The agent is a <b>rule-based, deterministic</b> expert system that runs in the browser. No LLM is used, and the label in the header says so. After every run it:</p>
+  <p>The <b>OpsLab Agent</b> runs in the browser and works directly on the simulation engine, so every number it reports is computed, never guessed. After every run it:</p>
   <ol><li><b>Tracks</b> the decisions you changed and the resulting KPI movement.</li>
     <li><b>Diagnoses</b> issues using operations rules (e.g. ROP &lt; lead-time demand, utilization &gt; 85%, external failure share &gt; 40%).</li>
     <li><b>Generates alternatives</b>: textbook heuristics (EOQ, SPT/EDD, Moore–Hodgson…) plus an exhaustive or grid search over the decision space.</li>
@@ -1964,7 +1964,7 @@ function guideHTML() {
     <li><b>Ranks</b> on the topic objective (profit, total cost, penalty), respecting constraints such as the service-level target, and lists what the best option gains and gives up.</li>
     <li><b>Reports</b> after the run, never during. Detailed advice appears only when you press <i>Get AI advice</i>.</li></ol>
   <h3>Optional: live AI agent chat</h3>
-  <p>The <b>Ask the AI agent</b> box (right panel) lets students ask free-form questions such as “Should I add a machine at B?” or “What if demand rises 30%?”. Connect any LLM under <i>Live LLM settings</i>: Anthropic Claude, NVIDIA NIM, OpenAI, Groq, OpenRouter, Google Gemini, a local Ollama model, or any OpenAI-compatible endpoint. A live LLM agent then answers. For providers that block browser calls (e.g. NVIDIA), run <code>node tools/llm-proxy.mjs</code> and tick <i>Use local proxy</i>. Models without tool calling still work: OpsLab sends them pre-computed simulator data. It has four tools: read the current state, run the simulation as a sandbox, run the optimizer, and propose settings. It must quote only numbers those tools return. Suggestions appear as an <i>Apply suggested settings</i> button; nothing changes until the student applies and runs. Without a key, the rule-based agent answers, so the demo still works offline and at no cost.</p>
+  <p>The <b>Ask the AI agent</b> box (right panel) lets students ask free-form questions such as “Should I add a machine at B?” or “What if demand rises 30%?”. Connect any AI model under <i>AI model settings</i>: Anthropic Claude, NVIDIA NIM, OpenAI, Groq, OpenRouter, Google Gemini, a local Ollama model, or any OpenAI-compatible endpoint. The OpsLab Agent then answers through that model. For providers that block browser calls (e.g. NVIDIA), run <code>node tools/llm-proxy.mjs</code> and tick <i>Use local proxy</i>. Models without tool calling still work: OpsLab sends them pre-computed simulator data. It has four tools: read the current state, run the simulation as a sandbox, run the optimizer, and propose settings. It must quote only numbers those tools return. Suggestions appear as an <i>Apply suggested settings</i> button; nothing changes until the student applies and runs. Without a key, the OpsLab Agent answers from its own analysis, so the demo works without internet and at no cost.</p>
   <p class="small muted">Classroom tip: run the live agent from the instructor's machine with a spending-limited key. Don't save keys on shared computers.</p>
   <h3>Optional: run it as a class room</h3>
   <ol><li>On your laptop, run <code>node tools/opslab-server.mjs</code> (Node 18+). It prints a <b>Students open</b> address, e.g. <code>http://192.168.1.20:8787</code>.</li>
@@ -1977,10 +1977,10 @@ function guideHTML() {
   </section>`;
 }
 
-/* ---------------- 7. Live AI agent (optional, Claude API) ----------------
+/* ---------------- 7. AI agent (optional, Claude API) ----------------
    A tool-using LLM agent. Every number it quotes must come from the tools below,
    which call the same deterministic engine as the rest of the app.
-   Without an API key the chat answers with the rule-based agent instead. */
+   Without an AI model connected, the OpsLab Agent answers from its own analysis. */
 // Providers. "anthropic" uses the Claude Messages API; all others use the OpenAI-compatible
 // chat-completions format (NVIDIA NIM, OpenAI, Groq, OpenRouter, Gemini, Ollama, custom).
 // Model lists are suggestions only: any model id the provider offers can be typed in.
@@ -2019,7 +2019,7 @@ const getChat = id => (LLM.chats[id] = LLM.chats[id] || {view: [], api: [], sig:
 const LLM_SYSTEM = `You are the OpsLab Operations Coach, a live AI agent inside a classroom simulator for an MBA Operations Management course. The student plays an operations manager. Seven topics exist: bottleneck & capacity, inventory management, production scheduling, quality management, queue management, supply chain disruption, process time analytics (takt, lead time, batch size, PCE, Little's Law, time study). Each user message says which topic the student is on.
 
 How to work:
-- Call get_current_state first to see the inputs, the student's latest run and the rule-based agent's best alternative.
+- Call get_current_state first to see the inputs, the student's latest run and the OpsLab Agent's best alternative.
 - Test ideas with run_simulation (several calls in parallel are fine) or optimize. These run the app's deterministic engine.
 - Every number you state must come from a tool result in this conversation. Never estimate, round up from memory or invent KPIs. If you have not run something, run it or say you have not tested it.
 - When you recommend specific decision values you have tested, call propose_settings once so the student can apply them. Never claim you changed their inputs.
@@ -2031,13 +2031,13 @@ How to answer:
 - Stay on operations management and this simulator. Politely steer other requests back.`;
 
 const LLM_TOOLS = [
-  {name: 'get_current_state', description: "Returns the current topic, every input (id, label, unit, role 'decision' or 'scenario', allowed range or options, current value), the objective, the KPIs and diagnosis of the student's latest run (null if none yet), and the rule-based agent's best alternative.",
+  {name: 'get_current_state', description: "Returns the current topic, every input (id, label, unit, role 'decision' or 'scenario', allowed range or options, current value), the objective, the KPIs and diagnosis of the student's latest run (null if none yet), and the OpsLab Agent's best alternative.",
     input_schema: {type: 'object', properties: {}, additionalProperties: false}},
   {name: 'run_simulation', description: "Runs the deterministic simulation for the current topic with the student's current inputs plus the given changes. Sandbox only: it does not change the student's inputs or history. Use it for every what-if before quoting numbers. Returns all KPIs, the objective value, whether constraints are met, and the diagnosis.",
     input_schema: {type: 'object', properties: {
       changes: {type: 'object', description: 'Map of input id to new value, e.g. {"mB": 2}, {"rule": "EDD"}, {"cont": true, "R": 2}. Use ids from get_current_state. Scenario inputs may be changed too, for what-if questions. Use {} to run the current inputs.'},
       label: {type: 'string', description: 'Short name for this test, shown to the student.'}}, required: ['changes']}},
-  {name: 'optimize', description: 'Runs the rule-based optimizer (exhaustive or grid search over the decision inputs) for the current topic, optionally after applying scenario changes. Returns the top-ranked options with KPIs. Useful to check robustness when the scenario changes.',
+  {name: 'optimize', description: 'Runs the OpsLab optimizer (exhaustive or grid search over the decision inputs) for the current topic, optionally after applying scenario changes. Returns the top-ranked options with KPIs. Useful to check robustness when the scenario changes.',
     input_schema: {type: 'object', properties: {scenario_changes: {type: 'object', description: 'Optional map of scenario input id to value, e.g. {"demand": 130}.'}}}},
   {name: 'propose_settings', description: 'Shows the student an "Apply suggested settings" button in the chat for decision inputs you recommend. The student decides whether to apply and run. Only include decision inputs whose values you have tested with run_simulation.',
     input_schema: {type: 'object', properties: {changes: {type: 'object', description: 'Map of decision input id to value.'}, summary: {type: 'string', description: 'One short line describing the proposal.'}}, required: ['changes', 'summary']}}
@@ -2150,9 +2150,9 @@ async function postJSON(a, url, headers, body) {
     const raw = (data.error && (data.error.message || data.error)) || data.detail || data.message || res.statusText;
     const msg = typeof raw === 'string' ? raw : JSON.stringify(raw);
     const err = new Error(
-      res.status === 401 || res.status === 403 ? `${a.label} rejected the API key (${res.status}). Check it in Live LLM settings.` :
+      res.status === 401 || res.status === 403 ? `${a.label} rejected the API key (${res.status}). Check it in AI model settings.` :
       res.status === 404 ? `${a.label} returned 404: check the model id "${a.model}" and the base URL. Click “Load models” to see what is available. (${msg})` :
-      res.status === 410 ? `The model "${a.model}" has been retired by ${a.label}. Click “Load models” in Live LLM settings and pick a current one. (${msg})` :
+      res.status === 410 ? `The model "${a.model}" has been retired by ${a.label}. Click “Load models” in AI model settings and pick a current one. (${msg})` :
       res.status === 429 ? 'Rate limit or quota reached (429). Wait a moment and ask again.' :
       res.status >= 500 ? `${a.label} is busy or unavailable (${res.status}). Try again shortly.` :
       `${a.label} error ${res.status}: ${msg}`);
@@ -2220,7 +2220,7 @@ function pickModel(list, current) {
 async function askLLM(t, question, retried = false) {
   const chat = getChat(t.id);
   if (!retried) { chat.view.push({role: 'user', text: question}); logActivity(t, 'Student asked: ' + question.slice(0, 60)); }
-  if (!llmLive()) { chat.view.push({role: 'assistant', text: ruleBasedReply(t), offline: true}); refreshAI(t); return; }
+  if (!llmLive()) { chat.view.push({role: 'assistant', text: agentReply(t), offline: true}); refreshAI(t); return; }
   const a = activeLLM(), sig = a.id + '|' + a.model;
   if (chat.sig !== sig) {
     if (chat.api.length) chat.view.splice(chat.view.length - 1, 0, {role: 'tool', text: `Switched to ${a.label} · ${a.model}: starting a fresh conversation context.`});
@@ -2270,7 +2270,7 @@ async function askLLM(t, question, retried = false) {
         const c = LLM.cfg[LLM.provider]; c.liveModels = await loadModels();
         const next = pickModel(c.liveModels, a.model);
         if (next) {
-          chat.view.push({role: 'tool', text: `“${a.model}” is not available on ${a.label}. Switched automatically to “${next}” (one of ${c.liveModels.length} current models) and asked again. You can change it in Live LLM settings.`});
+          chat.view.push({role: 'tool', text: `“${a.model}” is not available on ${a.label}. Switched automatically to “${next}” (one of ${c.liveModels.length} current models) and asked again. You can change it in AI model settings.`});
           c.model = next; saveLLM(); chat.sig = a.id + '|' + next; LLM.modelMsg = null;
           logActivity(t, `Model ${a.model} unavailable; switched to ${next}`);
           retryNext = true;
@@ -2281,16 +2281,16 @@ async function askLLM(t, question, retried = false) {
   if (retryNext) return askLLM(t, question, true);
 }
 
-function ruleBasedReply(t) {
+function agentReply(t) {
   const run = lastRun(t.id);
-  if (!run) return `**Rule-based reply** (no LLM connected).\n\nRun the simulation first. I can then diagnose your decisions and compare them with tested alternatives. Connect an LLM under *Live LLM settings* to chat with a live agent.`;
+  if (!run) return `Run the simulation first. I can then diagnose your decisions and compare them with tested alternatives. Connect an AI model under *AI model settings* to chat with a live agent.`;
   const a = run.analysis, k = t.kpis.find(k => k.key === t.objective.key), top = a.issues[0];
-  const lines = [`**Rule-based reply** (no LLM connected).`, ''];
+  const lines = [];
   if (a.isOptimal) lines.push(`Your latest run (${t.describe(run.p)}) is the best of the ${F.int(a.evaluated)} options I tested: **${fmtV(k.fmt, run.r[k.key])}**.`);
   else lines.push(`Try **${t.describe(a.best.p)}**: ${k.label.toLowerCase()} **${fmtV(k.fmt, a.best.r[k.key])}** vs your ${fmtV(k.fmt, run.r[k.key])} (best of ${F.int(a.evaluated)} tested options).`);
   if (top) lines.push('', `Main finding: **${top.title}**. ${top.text}`);
   const l = uniqueLessons(t, a.issues)[0]; if (l) lines.push('', `Lesson: ${l}`);
-  lines.push('', 'Connect an LLM under *Live LLM settings* (Claude, NVIDIA, OpenAI, Groq, Gemini, Ollama…) to ask free-form questions and what-ifs.');
+  lines.push('', 'Connect an AI model under *AI model settings* (Claude, NVIDIA, OpenAI, Groq, Gemini, Ollama…) to ask free-form questions and what-ifs.');
   return lines.join('\n');
 }
 
@@ -2328,10 +2328,10 @@ function chatHTML(t) {
     if (m.role === 'tool') return `<div class="msg tool">⚙ ${esc(m.text)}</div>`;
     if (m.role === 'error') return `<div class="msg error">${esc(m.text)}</div>`;
     if (m.role === 'proposal') return `<div class="msg assistant"><span class="who">Suggested settings</span>${esc(m.text)}<div style="margin-top:6px"><button class="btn small primary" data-apply="${i}">Apply suggested settings</button></div></div>`;
-    return `<div class="msg assistant"><span class="who">${m.offline ? 'Rule-based agent' : 'Live AI agent'}</span>${mdLite(m.text)}</div>`;
+    return `<div class="msg assistant"><span class="who">${m.offline ? 'OpsLab Agent' : 'OpsLab Agent · AI model'}</span>${mdLite(m.text)}</div>`;
   }).join('');
-  return `<div class="card" id="chatCard"><h3>Ask the AI agent <span class="live ${live ? 'on' : 'off'}">${live ? '● Live LLM' : '○ Offline (rule-based)'}</span></h3>
-    <p class="small muted" style="margin:0">${live ? `Using ${esc(a.label)} · <span class="mono">${esc(a.model)}</span>. It tests ideas by running this simulator, so the numbers it quotes are computed, not guessed.` : 'Connect an LLM below (Claude, NVIDIA, OpenAI, Groq, OpenRouter, Gemini, local Ollama…) to chat with a live agent. Until then, the rule-based agent answers.'}</p>
+  return `<div class="card" id="chatCard"><h3>Ask the AI agent <span class="live ${live ? 'on' : 'off'}">${live ? '● AI model connected' : '● OpsLab Agent'}</span></h3>
+    <p class="small muted" style="margin:0">${live ? `Using ${esc(a.label)} · <span class="mono">${esc(a.model)}</span>. It tests ideas by running this simulator, so the numbers it quotes are computed, not guessed.` : 'Connect an AI model below (Claude, NVIDIA, OpenAI, Groq, OpenRouter, Gemini, local Ollama…) for free-form conversation. Until then, the OpsLab Agent answers from its own analysis.'}</p>
     ${log ? `<div class="chat-log" id="chatLog">${log}${LLM.busy ? '<div class="msg tool dots">Agent is thinking and running simulations</div>' : ''}</div>` : `<div class="chips">${chips.map(c => `<button class="chip" data-q="${esc(c)}">${esc(c)}</button>`).join('')}</div>`}
     <div class="chat-in" style="margin-top:8px"><textarea id="chatInput" rows="2" placeholder="Ask for a suggestion, e.g. “Should I add a machine at B?”" ${LLM.busy ? 'disabled' : ''}>${esc(LLM.drafts[t.id] || '')}</textarea><button class="btn primary" id="chatSend" ${LLM.busy ? 'disabled' : ''}>Ask</button></div>
     <div style="display:flex;gap:10px;align-items:center;margin-top:4px">${chat.view.length ? '<button class="btn ghost small" id="chatClear">Clear chat</button>' : ''}<span class="small muted" style="margin-left:auto">Enter to send · Shift+Enter for a new line</span></div>
@@ -2339,7 +2339,7 @@ function chatHTML(t) {
 }
 function llmSettingsHTML() {
   const a = activeLLM(), provOpts = Object.entries(PROVIDERS).map(([id, pv]) => `<option value="${id}" ${id === a.id ? 'selected' : ''}>${esc(pv.label)}</option>`).join('');
-  return `<details class="llm-set" id="llmSet" ${LLM.settingsOpen ? 'open' : ''}><summary>Live LLM settings <span class="muted" style="font-weight:500">(chat v4)</span></summary>
+  return `<details class="llm-set" id="llmSet" ${LLM.settingsOpen ? 'open' : ''}><summary>AI model settings</summary>
       <div class="row2"><select id="llmProvider" aria-label="Provider">${provOpts}</select></div>
       <div class="row2"><input id="llmModel" list="llmModels" placeholder="Model id" value="${esc(a.model)}" aria-label="Model id" style="flex:1;min-width:150px;border:1px solid var(--line);background:var(--panel-2);color:var(--ink);border-radius:7px;padding:5px 7px;font:inherit;font-size:12.5px"><datalist id="llmModels">${(a.liveModels || a.models).map(m => `<option value="${esc(m)}">`).join('')}</datalist><button class="btn small" id="llmLoad" title="Fetch the current model list from the provider (uses the key and proxy settings)">Load models</button></div>
       ${a.liveModels ? `<div class="row2"><select id="llmPick" aria-label="Available models"><option value="">${a.liveModels.length} models available: pick one…</option>${a.liveModels.map(m => `<option value="${esc(m)}" ${m === a.model ? 'selected' : ''}>${esc(m)}</option>`).join('')}</select></div>` : ''}
@@ -2359,7 +2359,7 @@ function bindLLMSettings(t, rerender) {
   $('#llmProvider').onchange = e => { readForm(); LLM.provider = e.target.value; LLM.modelMsg = null; LLM.settingsOpen = true; rerender(); };
   $('#llmSave').onclick = () => {
     readForm(); saveLLM();
-    logActivity(t, llmLive() ? `Live LLM enabled (${activeLLM().label} · ${activeLLM().model})` : 'Live LLM settings saved (not connected)');
+    logActivity(t, llmLive() ? `AI model connected (${activeLLM().label} · ${activeLLM().model})` : 'AI model settings saved (not connected)');
     LLM.settingsOpen = !llmLive(); rerender();
   };
   $('#llmOllama').onclick = async () => { LLM.ollamaMsg = {text: 'Connecting…'}; LLM.settingsOpen = true; rerender(); LLM.ollamaMsg = await useOllama(); rerender(); if (t && state.view === t.id) renderMain(); };
@@ -2598,9 +2598,9 @@ function bindRoom() {
 
 /* ---------------- 9. Scenario Agent ----------------
    One agent that writes cases for every topic: a single case (title, story, scenario values) or a whole
-   campaign (one briefing + conditions per round). It uses the LLM chosen in Live LLM settings (Claude,
+   campaign (one briefing + conditions per round). It uses the LLM chosen in AI model settings (Claude,
    NVIDIA, OpenAI, Groq, Gemini, Ollama...). Every value it proposes is validated against the input's
-   range; it can never change decisions. Without an LLM, a rule-based generator makes random cases. */
+   range; it can never change decisions. Without an AI model, the agent's built-in generator makes the cases. */
 const SCEN = {busy: false, msg: {}, theme: {}};
 const stripHtml = h => String(h).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
 const SCEN_SYSTEM = `You are the OpsLab Scenario Agent. You write realistic, varied teaching cases for an MBA Operations Management course, set in real-feeling companies and industries (Indian and global settings are welcome).
@@ -2778,7 +2778,7 @@ async function generateCampaign(t, period, n, theme) {
     return {title: shortText(obj.title, 80) || 'Generated campaign', story: shortText(obj.story || obj.narrative, 500), rounds, notes, source: `Scenario Agent · ${a.label} · ${a.model}`};
   });
 }
-// Rule-based fallback: perturb 3–4 scenario inputs around their defaults (seeded, reproducible).
+// Built-in generator: perturb 3–4 scenario inputs around their defaults (seeded, reproducible).
 function randomCase(t, seed) {
   const r = rng(seed * 7919 + t.num * 104729), d = defaults(t);
   const nums = t.params.filter(x => x.role === 'scenario' && !x.type);
@@ -2787,7 +2787,7 @@ function randomCase(t, seed) {
   if (t.id === 'scheduling') { const g = rng(seed * 31 + 7); const jobs = d.jobs.map(j => ({id: j.id, p: 2 + Math.floor(g() * 9)})); const P = sum(jobs.map(j => j.p)); jobs.forEach(j => { j.d = clamp(j.p + 1 + Math.floor(g() * P * 0.85), 1, 120); }); ch.jobs = jobs; }
   const {scen} = validScenario(t, ch);
   const diffs = changesText(t, {...state.inputs[t.id], ...paramDefaults(t)}, {...state.inputs[t.id], ...scen}).filter(c => c.role === 'scenario').map(c => c.text);
-  return {title: `Random case #${seed}`, story: 'Random variation of the standard scenario: ' + (diffs.join('; ') || 'no change') + '.', scenario: scen, notes: [], source: 'Rule-based generator (no LLM)'};
+  return {title: `Random case #${seed}`, story: 'Random variation of the standard scenario: ' + (diffs.join('; ') || 'no change') + '.', scenario: scen, notes: [], source: 'Scenario Agent (built-in generator)'};
 }
 function applyCase(t, c) {
   state.cases[t.id] = c;
@@ -2796,10 +2796,10 @@ function applyCase(t, c) {
 }
 function caseHTML(t) {
   const c = state.cases[t.id], live = llmLive(), a = activeLLM(), m = SCEN.msg[t.id];
-  return `<div class="scen-agent"><div class="scen-head"><b>✦ Scenario Agent</b><span class="small muted">${live ? `uses ${esc(a.label)} · <span class="mono">${esc(a.model)}</span>` : 'no LLM connected: rule-based random cases only'}</span></div>
+  return `<div class="scen-agent"><div class="scen-head"><b>✦ Scenario Agent</b><span class="small muted">${live ? `uses ${esc(a.label)} · <span class="mono">${esc(a.model)}</span>` : 'built-in generator · connect an AI model for written cases'}</span></div>
     ${c ? `<div class="rec" style="margin:8px 0"><div class="name">${esc(c.title)}</div><p class="small" style="margin:4px 0">${esc(c.story)}</p><div class="small muted">${esc(c.source)}${c.notes && c.notes.length ? ` · adjusted: ${esc(c.notes.slice(0, 3).join('; '))}` : ''}</div></div>` : ''}
     <div class="chat-in"><input type="text" id="scenTheme" placeholder="Optional brief, e.g. “monsoon floods hit a pharma plant in Vizag”" value="${esc(SCEN.theme[t.id] || '')}" style="flex:1;border:1px solid var(--line);background:var(--panel-2);color:var(--ink);border-radius:9px;padding:7px 9px;font:inherit;font-size:13px"></div>
-    <div class="actions" style="margin-top:8px"><button class="btn ${live ? 'primary' : ''}" id="scenGen" ${SCEN.busy || !live ? 'disabled' : ''} title="${live ? 'Ask the LLM to write a case' : 'Connect an LLM in Live LLM settings first'}">${SCEN.busy ? 'Writing case…' : '✦ Generate case with AI'}</button>
+    <div class="actions" style="margin-top:8px"><button class="btn ${live ? 'primary' : ''}" id="scenGen" ${SCEN.busy || !live ? 'disabled' : ''} title="${live ? 'Ask the Scenario Agent to write a case' : 'Connect an AI model in AI model settings first'}">${SCEN.busy ? 'Writing case…' : '✦ Generate case with AI'}</button>
       <button class="btn" id="scenRand" ${SCEN.busy ? 'disabled' : ''}>🎲 Random case</button>
       ${c ? '<button class="btn ghost" id="scenClear">Restore standard scenario</button>' : ''}
       ${!live ? '<button class="btn ghost" id="scenOllama" title="Use a free local model through Ollama">Use Ollama (free)</button>' : ''}</div>
@@ -2832,7 +2832,7 @@ async function useOllama() {
     const pref = [/llama3\.[13]|llama-?3/i, /qwen2?\.?5|qwen3/i, /mistral/i, /gemma/i, /phi/i];
     c.model = (pref.map(re => list.find(m => re.test(m))).find(Boolean)) || list[0];
     saveLLM(); logActivity(null, `Ollama connected (${c.model})`);
-    return {text: `Connected to Ollama${viaServer ? ' on the class server' : ''}: using ${c.model} (${list.length} model${list.length > 1 ? 's' : ''} installed). Change it in Live LLM settings.`};
+    return {text: `Connected to Ollama${viaServer ? ' on the class server' : ''}: using ${c.model} (${list.length} model${list.length > 1 ? 's' : ''} installed). Change it in AI model settings.`};
   } catch (e) {
     saveLLM();
     return {err: true, text: viaServer ? `Could not reach Ollama through the class server. On the server laptop, start Ollama (ollama serve) and pull a model (ollama pull llama3.1). (${e.message})`
@@ -3233,18 +3233,18 @@ function renderTSAAgent() {
   const graded = Object.values(s.grades), ok = graded.filter(g => g.ok).length;
   const tools = {1: ['Rolling mean & std', 'First-half vs second-half statistics'], 2: ['ADF test on y'], 3: ['Apply your chosen transformation'], 4: ['ADF test on the transformed series'], 5: ['ACF plot (10–40 lags)'], 6: ['PACF plot (10–40 lags)'], 7: ['Fit up to 3 ARIMA models, forecast the test set'], 8: ['Compare fitted models']}[s.step] || [];
   const items = s.hist.slice(-14).reverse();
-  $('#side').innerHTML = `<div class="card"><div class="ai-head"><div class="ai-badge">AI</div><div><h3>Analytics Agent</h3><p><span class="status-dot" style="background:${s.step <= 8 ? 'var(--warn)' : 'var(--good)'}"></span>${s.step <= 8 ? 'Waiting for your input' : 'Lab complete'} · rule-based (no LLM)</p></div></div>
+  $('#side').innerHTML = `<div class="card"><div class="ai-head"><div class="ai-badge">AI</div><div><h3>Analytics Agent</h3><p><span class="status-dot" style="background:${s.step <= 8 ? 'var(--warn)' : 'var(--good)'}"></span>${s.step <= 8 ? 'Waiting for your input' : 'Lab complete'}</p></div></div>
     ${s.step <= 8 ? `<div class="ai-section"><div class="rec"><div class="name">⏸ Step ${s.step}: ${esc(TSA_STEPS[s.step - 1])}</div><p class="small" style="margin:4px 0 0">I won't move ahead or give the answer. Ask me for analysis, then submit your decision.</p>${tools.length ? `<div class="small" style="margin-top:6px"><b>Analyses I can run now:</b><ul class="clean">${tools.map(t => `<li>${esc(t)}</li>`).join('')}</ul></div>` : ''}</div></div>` : ''}
     <div class="ai-section"><h4>Decisions checked</h4><div class="score"><div><div class="big">${ok}/${graded.length || 0}</div><div class="small muted">correct so far</div></div><div style="flex:1"><div class="meter"><i style="width:${graded.length ? ok / graded.length * 100 : 0}%"></i></div></div></div></div>
     <div class="ai-section"><h4>Analysis log (newest first)</h4>${items.map(h => `<div class="issue ${h.kind === 'verdict' ? (h.ok ? 'ok' : 'high') : ''}" ${h.kind === 'you' ? 'style="border-style:dashed"' : ''}><span class="ic">${h.kind === 'you' ? '🧑' : h.kind === 'verdict' ? (h.ok ? '✓' : '!') : '⚙'}</span><div class="small">${h.kind === 'you' ? '<b>You</b> ' : ''}${esc(h.text.replace(/^[✓✗] /, ''))}</div></div>`).join('')}</div>
-    <p class="small muted" style="margin:6px 0 0">All statistics are computed in your browser and match Python's statsmodels (adfuller, acf, pacf). The live LLM chat is available on topics 1–7.</p></div>` + activityCard();
+    <p class="small muted" style="margin:6px 0 0">All statistics are computed in your browser and match Python's statsmodels (adfuller, acf, pacf). The agent chat is available on topics 1–7.</p></div>` + activityCard();
 }
 
 /* ---------------- 11. Study Room ----------------
    Students upload session slides (.pptx). Everything is read in the browser: the .pptx (a zip of XML
    files) is unzipped with the built-in DecompressionStream, and slide titles, text, tables, images and
-   speaker notes are extracted. Notes, visual explanations, quizzes and Q&A work offline (rule-based)
-   and get better with a connected LLM. Slide text goes only to the LLM the student chooses. */
+   speaker notes are extracted. Notes, visual explanations, quizzes and Q&A work without an AI model
+   and get richer with one. Slide text goes only to the LLM the student chooses. */
 const STUDY = {decks: [], active: null, tab: 'notes', slide: 0, busy: false, msg: null, help: [], qDraft: ''};
 const xmlDoc = u8 => new DOMParser().parseFromString(new TextDecoder().decode(u8), 'application/xml');
 const tagText = (el, tag) => [...el.getElementsByTagName(tag)];
@@ -3316,7 +3316,7 @@ async function parsePptx(file) {
   slides.forEach(s => { s.paras = s.paras.filter(p => !boiler.includes(p)); });
   return {slides, boiler};
 }
-/* ---- text analytics (offline) ---- */
+/* ---- text analytics (built into the agent) ---- */
 const STOP = new Set('a an and are as at be by can for from has have how if in into is it its of on or that the their then there these this to was were what when where which while who why will with within without you your we our they them he she his her not no yes do does did also may might should would could more most less than such each other any all some one two three using use used based per via etc e.g i.e vs about between over under after before during up down out so very just only same both own here new let make made many much well way'.split(' '));
 const words = t => (String(t).toLowerCase().match(/[a-z][a-z0-9'’\-]*[a-z0-9]|[a-z]/g) || []).filter(w => w.length > 1 && !STOP.has(w));
 const slideText = s => [s.title, ...s.paras, ...s.tables.flat(), s.notes].join('\n');
@@ -3405,7 +3405,7 @@ function relevantSlides(deck, q, k = 4) {
   return docs.map((d, i) => { const v = vec(d), n = Math.sqrt(sum(Object.values(v).map(x => x * x))) || 1; let dot = 0; Object.keys(qv).forEach(w => { if (v[w]) dot += qv[w] * v[w]; }); return {s: deck.slides[i], score: dot / qn / n}; })
     .filter(x => x.score > 0).sort((a, b) => b.score - a.score).slice(0, k);
 }
-// Offline quiz: fill-in-the-blank questions built from sentences that contain key terms.
+// Agent quiz: fill-in-the-blank questions built from sentences that contain key terms.
 function ruleQuiz(deck, n, from, to) {
   const r = rng(deck.slides.length * 131 + n * 7 + from + (deck.quizSeed = (deck.quizSeed || 0) + 1) * 977), terms = deck.terms.map(t => t.term), qs = [], used = new Set();
   const pool = deck.slides.filter(s => s.n >= from && s.n <= to).flatMap(s => [...s.paras, s.notes].filter(Boolean).flatMap(p => p.split(/(?<=[.!?])\s+/)).filter(p => p.length >= 35 && p.length <= 240 && !isCode(p)).map(p => ({p, n: s.n})));
@@ -3648,7 +3648,7 @@ async function readStudyFile(f) {
   throw new Error('unsupported file type. Use PowerPoint (.pptx), PDF, Word (.docx), Excel (.xlsx), CSV, HTML, text or images');
 }
 
-/* ---- Study Room: AI helpers (use the LLM chosen in Live LLM settings) ---- */
+/* ---- Study Room: AI helpers (use the LLM chosen in AI model settings) ---- */
 function deckContext(slides, maxChars = 3500) {
   let out = '';
   for (const s of slides) {
@@ -3695,7 +3695,7 @@ async function aiVisual(deck, s) {
 function ruleVisual(s) {
   const pts = s.paras.filter(p => !isCode(p)).slice(0, 6), nodes = [{id: 't', label: shortText(s.title, 48)}];
   pts.forEach((p, i) => nodes.push({id: 'p' + i, label: shortText(p.replace(/[:;].*$/, ''), 48)}));
-  return {title: s.title, nodes, edges: pts.map((_, i) => ({from: 't', to: 'p' + i, label: ''})), explanation: '', analogy: '', example: '', source: 'Slide structure (offline)'};
+  return {title: s.title, nodes, edges: pts.map((_, i) => ({from: 't', to: 'p' + i, label: ''})), explanation: '', analogy: '', example: '', source: 'Slide structure'};
 }
 function diagramSVG(dg) {
   const nodes = dg.nodes, byId = Object.fromEntries(nodes.map(n => [n.id, n])), layer = Object.fromEntries(nodes.map(n => [n.id, 0]));
@@ -3729,7 +3729,7 @@ async function aiQuiz(deck, n, from, to) {
       }).filter(q => q.answer >= 0);
       if (!qs.length) throw new Error('no usable questions');
       return qs.slice(0, n);
-    } catch (e) { if (attempt) throw new Error('The model did not return a usable quiz. Try again, choose fewer questions, or use the offline quiz.'); }
+    } catch (e) { if (attempt) throw new Error('The model did not return a usable quiz. Try again, choose fewer questions, or use the quick quiz.'); }
   }
 }
 const HELP_SYSTEM = `You are a patient tutor for an MBA Operations Management / Operations Analytics course. Answer the student's question using the lecture slides provided, citing them like [Slide 7]. Explain step by step in plain language, with a small example when it helps. If the slides do not cover the question, say so in one sentence, then give a brief general answer marked (general knowledge). Keep it under 220 words. Use Markdown bullets and **bold** sparingly.`;
@@ -3754,7 +3754,7 @@ async function studyLoad(files) {
 }
 function studyHTML() {
   const d = studyDeck(), live = llmLive(), m = STUDY.msg;
-  let html = `<section class="card"><div class="thead"><div class="t"><div class="small muted" style="font-weight:700">STUDY ROOM</div><h2>📚 Learn from your session material</h2><p class="role">Upload a session's slides or readings: PowerPoint, PDF, Word, Excel and more. You get study notes, visual explanations, quiz practice and help grounded in the slides, plus links to the matching OpsLab simulations. The file is read in your browser. Slide text is sent only to the LLM you choose in the panel on the right (with Ollama it never leaves your computer). Without an LLM, everything still works in a simpler, slide-based way.</p></div></div>
+  let html = `<section class="card"><div class="thead"><div class="t"><div class="small muted" style="font-weight:700">STUDY ROOM</div><h2>📚 Learn from your session material</h2><p class="role">Upload a session's slides or readings: PowerPoint, PDF, Word, Excel and more. You get study notes, visual explanations, quiz practice and help grounded in the slides, plus links to the matching OpsLab simulations. The file is read in your browser. Slide text is sent only to the AI model you choose in the panel on the right (with Ollama it never leaves your computer). Without a model connected, the OpsLab Agent still builds notes, quizzes and answers from the slides.</p></div></div>
     <label class="dropzone" id="studyDrop"><input type="file" id="studyFile" accept=".pptx,.ppsx,.pdf,.docx,.xlsx,.xlsm,.csv,.tsv,.html,.htm,.txt,.md,.rtf,.png,.jpg,.jpeg,.gif,.webp" multiple hidden><b>⬆ Drop your files here</b> or click to choose<span class="small muted">PowerPoint (.pptx), PDF, Word (.docx), Excel (.xlsx), CSV, HTML, text/Markdown or images · several files at once is fine</span></label>
     ${m ? `<div class="msg ${m.err ? 'error' : 'tool'} ${STUDY.busy ? 'dots' : ''}" style="margin-top:8px">${esc(m.text)}</div>` : ''}
     ${STUDY.decks.length ? `<div class="rchips" style="margin-top:10px">${STUDY.decks.map(x => `<span class="rchip ${x.id === STUDY.active ? 'now' : ''}" data-deck="${x.id}" style="cursor:pointer">${esc(x.name)} <span class="muted">${esc(x.ext || '')}</span> · ${x.slides.length} ${x.unit || 'slide'}${x.slides.length > 1 ? 's' : ''} <b data-del="${x.id}" title="Remove" style="margin-left:4px">×</b></span>`).join('')}</div>` : ''}</section>`;
@@ -3767,11 +3767,11 @@ function studyHTML() {
   return html;
 }
 function studyTabHTML(d, live) {
-  const busyBtn = (id, label, title) => `<button class="btn ${live ? 'primary' : ''}" id="${id}" ${STUDY.busy || !live ? 'disabled' : ''} title="${live ? '' : 'Connect an LLM in the panel on the right'}">${STUDY.busy && STUDY.busyOn === id ? 'Working…' : label}</button>`;
+  const busyBtn = (id, label, title) => `<button class="btn ${live ? 'primary' : ''}" id="${id}" ${STUDY.busy || !live ? 'disabled' : ''} title="${live ? '' : 'Connect an AI model in the panel on the right'}">${STUDY.busy && STUDY.busyOn === id ? 'Working…' : label}</button>`;
   if (STUDY.tab === 'notes') {
     const showAI = d.aiNotes && d.showAI !== false;
     return `<div class="actions">${busyBtn('studyAINotes', d.aiNotes ? '✦ Rewrite AI notes' : '✦ Write AI study notes')}${d.aiNotes ? `<button class="btn small" id="studyNotesToggle">${showAI ? 'Show slide-based notes' : 'Show AI notes'}</button>` : ''}<button class="btn small" id="studyNotesDl">⬇ Download notes (.md)</button></div>
-      <p class="small muted">${showAI ? `AI notes by ${esc(d.aiNotesBy)}. Check them against the slides.` : 'Slide-based notes (offline): grouped by section, with formulas, tables, code and a glossary of key terms. Connect an LLM for explained notes.'}</p>
+      <p class="small muted">${showAI ? `AI notes by ${esc(d.aiNotesBy)}. Check them against the slides.` : 'Slide-based notes: grouped by section, with formulas, tables, code and a glossary of key terms. Connect an AI model for explained notes.'}</p>
       <div class="notes">${mdBlock(showAI ? d.aiNotes : d.notesMd, d)}</div>`;
   }
   if (STUDY.tab === 'visual') {
@@ -3791,8 +3791,8 @@ function studyTabHTML(d, live) {
     const q = d.quiz;
     const setup = `<div class="actions"><label class="small">Questions <select id="quizN" class="tsa-sel">${[5, 10, 15].map(n => `<option>${n}</option>`).join('')}</select></label>
       <label class="small">Slides <input type="number" id="quizFrom" class="tsa-sel" min="1" max="${d.slides.length}" value="1" style="width:64px"> to <input type="number" id="quizTo" class="tsa-sel" min="1" max="${d.slides.length}" value="${d.slides.length}" style="width:64px"></label>
-      ${busyBtn('studyAIQuiz', '✦ AI quiz')}<button class="btn" id="studyRuleQuiz">📝 Quick quiz from slides (offline)</button></div>`;
-    if (!q) return setup + '<div class="empty">Choose the range and generate a quiz. AI quizzes mix concept, interpretation and calculation questions. The offline quiz asks you to fill in key terms from the slides.</div>';
+      ${busyBtn('studyAIQuiz', '✦ AI quiz')}<button class="btn" id="studyRuleQuiz">📝 Quick quiz from the slides</button></div>`;
+    if (!q) return setup + '<div class="empty">Choose the range and generate a quiz. AI quizzes mix concept, interpretation and calculation questions. The quick quiz asks you to fill in key terms from the slides.</div>';
     const checked = q.checked, score = checked ? q.items.filter((x, i) => q.picks[i] === x.answer).length : 0;
     return setup + `<p class="small muted">${esc(q.source)} · ${q.items.length} questions${d.bestQuiz !== null ? ` · your best: ${d.bestQuiz}%` : ''}</p>
       ${checked ? `<div class="callout"><b>Score: ${score}/${q.items.length} (${Math.round(score / q.items.length * 100)}%).</b> ${score === q.items.length ? 'Excellent!' : 'Review the explanations below, then retry.'}</div>` : ''}
@@ -3801,7 +3801,7 @@ function studyTabHTML(d, live) {
   }
   const hist = d.help;
   return `<div class="chat-in"><textarea id="studyQ" rows="2" placeholder="Ask about this session, e.g. “Why do we difference a series before ARIMA?”" ${STUDY.busy ? 'disabled' : ''}>${esc(STUDY.qDraft)}</textarea><button class="btn primary" id="studyAsk" ${STUDY.busy ? 'disabled' : ''}>${STUDY.busy ? 'Thinking…' : 'Ask'}</button></div>
-    <p class="small muted">${live ? `Answers come from ${esc(activeLLM().label)}, grounded in the most relevant slides and citing them.` : 'Offline: you get the most relevant slides and sentences. Connect an LLM for explained answers.'}</p>
+    <p class="small muted">${live ? `Answers come from ${esc(activeLLM().label)}, grounded in the most relevant slides and citing them.` : 'You get the most relevant slides and sentences. Connect an AI model for explained answers.'}</p>
     ${hist.slice().reverse().map(h => `<div class="msg user" style="max-width:100%;margin-top:10px">${esc(h.q)}</div><div class="msg assistant" style="max-width:100%;margin-top:6px"><span class="who">${h.ai ? 'Study assistant' : 'Relevant slides'}</span>${h.html}</div>`).join('')}`;
 }
 function bindStudy() {
@@ -3825,7 +3825,7 @@ function bindStudy() {
   on('studyVisual', () => run('studyVisual', async () => { const s = d.slides[STUDY.slide]; d.visual[s.n] = await aiVisual(d, s); }));
   const range = () => { const n = +$('#quizN').value; let a = clamp(Math.round(+$('#quizFrom').value) || 1, 1, d.slides.length), b = clamp(Math.round(+$('#quizTo').value) || d.slides.length, 1, d.slides.length); if (b < a) [a, b] = [b, a]; return [n, a, b]; };
   on('studyAIQuiz', () => run('studyAIQuiz', async () => { const [n, a, b] = range(); const items = await aiQuiz(d, n, a, b); d.quiz = {items, picks: [], checked: false, source: `AI quiz by ${activeLLM().label} · ${activeLLM().model}`}; }));
-  on('studyRuleQuiz', () => { const [n, a, b] = range(); const items = ruleQuiz(d, n, a, b); if (!items.length) { STUDY.msg = {err: true, text: 'Not enough text in these slides for an offline quiz. Widen the slide range or use the AI quiz.'}; return render(); } d.quiz = {items, picks: [], checked: false, source: 'Offline quiz: fill in the key term'}; STUDY.msg = null; renderMain(); });
+  on('studyRuleQuiz', () => { const [n, a, b] = range(); const items = ruleQuiz(d, n, a, b); if (!items.length) { STUDY.msg = {err: true, text: 'Not enough text in these slides for a quick quiz. Widen the slide range or use the AI quiz.'}; return render(); } d.quiz = {items, picks: [], checked: false, source: 'Quick quiz: fill in the key term'}; STUDY.msg = null; renderMain(); });
   $$('.quiz input[type=radio]').forEach(r => r.onchange = () => { d.quiz.picks[+r.name.slice(1)] = +r.value; });
   on('quizCheck', () => { const q = d.quiz; q.checked = true; const pct = Math.round(q.items.filter((x, i) => q.picks[i] === x.answer).length / q.items.length * 100); d.bestQuiz = Math.max(d.bestQuiz || 0, pct); logActivity({short: 'Study'}, `Quiz on ${d.name}: ${pct}%`); renderMain(); });
   on('quizRetry', () => { const q = d.quiz, wrong = q.items.filter((x, i) => q.picks[i] !== x.answer); d.quiz = {items: wrong.length ? wrong : q.items, picks: [], checked: false, source: q.source + ' · retry'}; renderMain(); });
@@ -3833,15 +3833,15 @@ function bindStudy() {
   on('studyAsk', () => { const q = (STUDY.qDraft || '').trim(); if (!q) return; STUDY.qDraft = ''; run('studyAsk', async () => {
     const top = relevantSlides(d, q, 4);
     if (llmLive()) { const md = await llmText(HELP_SYSTEM, `QUESTION: ${q}\n\nMOST RELEVANT SLIDES from "${d.name}":\n${deckContext(top.map(x => x.s), 5000) || '(no matching slides)'}`); d.help.push({q, ai: true, html: mdBlock(md, d)}); }
-    else d.help.push({q, ai: false, html: top.length ? top.map(x => { const qs = new Set(words(q)); const best = [...x.s.paras, x.s.notes].filter(Boolean).sort((a, b) => words(b).filter(w => qs.has(w)).length - words(a).filter(w => qs.has(w)).length).slice(0, 2); return `<p><span class="chg">Slide ${x.s.n}</span> <b>${esc(x.s.title)}</b></p>${best.length ? `<ul>${best.map(b => `<li>${esc(b)}</li>`).join('')}</ul>` : ''}`; }).join('') : '<p>No slide matches these words. Try different keywords, or connect an LLM for a general explanation.</p>'});
+    else d.help.push({q, ai: false, html: top.length ? top.map(x => { const qs = new Set(words(q)); const best = [...x.s.paras, x.s.notes].filter(Boolean).sort((a, b) => words(b).filter(w => qs.has(w)).length - words(a).filter(w => qs.has(w)).length).slice(0, 2); return `<p><span class="chg">Slide ${x.s.n}</span> <b>${esc(x.s.title)}</b></p>${best.length ? `<ul>${best.map(b => `<li>${esc(b)}</li>`).join('')}</ul>` : ''}`; }).join('') : '<p>No slide matches these words. Try different keywords, or connect an AI model for a general explanation.</p>'});
     logActivity({short: 'Study'}, 'Question asked about ' + d.name); }); });
 }
 function renderStudySide() {
   const live = llmLive(), a = activeLLM(), d = studyDeck();
-  $('#side').innerHTML = `<div class="card" id="chatCard"><div class="ai-head"><div class="ai-badge">AI</div><div><h3>Study assistant</h3><p><span class="status-dot" style="background:${live ? 'var(--good)' : 'var(--faint)'}"></span>${live ? `${esc(a.label)} · ${esc(a.model)}` : 'Offline: slide-based features only'}</p></div></div>
+  $('#side').innerHTML = `<div class="card" id="chatCard"><div class="ai-head"><div class="ai-badge">AI</div><div><h3>Study assistant</h3><p><span class="status-dot" style="background:${live ? 'var(--good)' : 'var(--faint)'}"></span>${live ? `${esc(a.label)} · ${esc(a.model)}` : 'Study tools ready · connect an AI model for richer help'}</p></div></div>
     ${d ? `<div class="ai-section"><h4>${esc(d.name)}</h4><div class="small">${d.slides.length} slides · ${d.slides.reduce((n, s) => n + s.images.length, 0)} images · ${d.terms.length} key terms${d.bestQuiz !== null ? ` · best quiz ${d.bestQuiz}%` : ''}</div>${d.terms.length ? `<div style="margin-top:6px">${d.terms.slice(0, 10).map(t => `<span class="chg">${esc(t.term)}</span>`).join('')}</div>` : ''}</div>` : ''}
     <div class="ai-section"><h4>Suggested routine</h4><ol class="small" style="padding-left:18px;margin:0"><li>Read the notes (download them for revision)</li><li>Step through the slides with visual explanations</li><li>Take a quiz and retry the ones you missed</li><li>Ask about anything unclear</li><li>Practise the concept in the linked simulation</li></ol></div>
-    <p class="small muted" style="margin:8px 0 0">${live ? 'Slide text is sent to this provider only when you press an AI button.' : 'Connect an LLM below for explained notes, diagrams, AI quizzes and answers. Ollama is free and keeps your slides on your computer.'}</p>
+    <p class="small muted" style="margin:8px 0 0">${live ? 'Slide text is sent to this provider only when you press an AI button.' : 'Connect an AI model below for explained notes, diagrams, AI quizzes and answers. Ollama is free and keeps your slides on your computer.'}</p>
     ${llmSettingsHTML()}</div>` + activityCard();
   bindLLMSettings(null, () => { renderStudySide(); if (state.view === 'study') { renderMain(); bindStudy(); } });
 }

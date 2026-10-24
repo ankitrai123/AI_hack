@@ -1007,7 +1007,146 @@ const TOPICS = [
         marks: r.service.map((v, i) => (v < 0.999 ? i : -1)).filter(i => i >= 0)});
   },
   chartTitle: 'Inventory on hand by day (red ticks = your stockout days)'
+},
+
+/* ===== 7. Process Time Analytics ===== */
+{
+  id: 'leadtime', num: 7, name: 'Process Time Analytics', short: 'Lead time',
+  role: 'You run an order-to-ship process: order entry → cutting → transport → assembly → inspection → packing. Customers pay for speed, so every hour an order spends in the system has a cost. Choose the batch size and which lean improvements to fund. Assembly time comes from a time study.',
+  concept: `<p><b>Lead time</b> is how long a unit takes from order to shipment. Usually only a tiny share of it is <b>value-added</b> work. The rest is waiting: for the rest of the batch, for a setup, in a queue, or in transport. <b>Process cycle efficiency</b> (PCE = value-added time ÷ lead time) is often below 5%.</p>
+  <p>Big batches spread setup time but make every unit wait for its whole batch. Small batches cut that wait, but more setups eat capacity. Near 100% utilization, queues explode (Kingman's formula). <b>SMED</b> shortens setups so small batches become feasible. <b>Little's Law</b> links it all: WIP = throughput × lead time. A <b>time study</b> sets the standard time used for planning.</p>`,
+  formulas: [
+    ['Standard time (time study)', 'observed time × rating × (1 + allowance)'],
+    ['Takt time', 'available time ÷ demand'],
+    ['Utilization at a station', 'u = demand × (t + S/Q) ÷ available time'],
+    ['Queue time (Kingman / VUT)', '((ca² + ce²)/2) × (u/(1−u)) × (S + Q·t)'],
+    ['Batch formation wait', '(Q − 1)/2 × takt'],
+    ['Lead time', 'order delay + batch wait + Σ(queue + S + Q·t) + transport'],
+    ['Process cycle efficiency', 'value-added time ÷ lead time'],
+    ["Little's Law", 'WIP = throughput × lead time'],
+    ['Daily cost', 'TH × lead time (h) × delay cost + unmet units × margin + improvement costs']
+  ],
+  params: [
+    {id: 'Q', label: 'Batch size (units per batch)', role: 'decision', min: 1, max: 100, step: 1, def: 40},
+    {id: 'smed', label: 'SMED: cut all setup times by 60%', role: 'decision', type: 'checkbox', def: false},
+    {id: 'cell', label: 'Cellular layout: cut transport time by 80%', role: 'decision', type: 'checkbox', def: false},
+    {id: 'poka', label: 'Poka-yoke at source: remove the final inspection step', role: 'decision', type: 'checkbox', def: false},
+    {id: 'D', label: 'Demand', unit: 'units/day', role: 'scenario', min: 10, max: 120, step: 5, def: 60},
+    {id: 'T', label: 'Available time', unit: 'min/day', role: 'scenario', min: 240, max: 960, step: 30, def: 480},
+    {id: 'obs', label: 'Assembly: observed time (time study)', unit: 'min/unit', role: 'scenario', min: 1, max: 12, step: 0.1, def: 5},
+    {id: 'rating', label: 'Assembly: performance rating', unit: '%', role: 'scenario', min: 70, max: 130, step: 5, def: 110},
+    {id: 'allow', label: 'Assembly: PF&D allowance', unit: '%', role: 'scenario', min: 0, max: 30, step: 1, def: 15},
+    {id: 'Sa', label: 'Assembly setup time', unit: 'min/batch', role: 'scenario', min: 0, max: 90, step: 5, def: 20},
+    {id: 'tc', label: 'Cutting time', unit: 'min/unit', role: 'scenario', min: 0.5, max: 10, step: 0.5, def: 3},
+    {id: 'Sc', label: 'Cutting setup time', unit: 'min/batch', role: 'scenario', min: 0, max: 90, step: 5, def: 30},
+    {id: 'tp', label: 'Packing time', unit: 'min/unit', role: 'scenario', min: 0.5, max: 10, step: 0.5, def: 2},
+    {id: 'Sp', label: 'Packing setup time', unit: 'min/batch', role: 'scenario', min: 0, max: 60, step: 5, def: 10},
+    {id: 'ti', label: 'Inspection time', unit: 'min/unit', role: 'scenario', min: 0, max: 5, step: 0.5, def: 1.5},
+    {id: 'move', label: 'Transport time per batch move', unit: 'min', role: 'scenario', min: 0, max: 240, step: 5, def: 45},
+    {id: 'od', label: 'Order entry delay', unit: 'min', role: 'scenario', min: 0, max: 480, step: 10, def: 60},
+    {id: 'cv', label: 'Variability (ca² = ce²)', role: 'scenario', min: 0, max: 2, step: 0.1, def: 1, help: '0 = perfectly regular, 1 = random (exponential-like), 2 = very erratic.'},
+    {id: 'dc', label: 'Delay cost', unit: '$/unit-hour of lead time', role: 'scenario', min: 0, max: 5, step: 0.05, def: 1},
+    {id: 'margin', label: 'Margin lost per unit not made', unit: '$/unit', role: 'scenario', min: 0, max: 200, step: 5, def: 40, help: 'Matters only when batches are so small that the line cannot meet demand.'},
+    {id: 'cSmed', label: 'SMED cost', unit: '$/day', role: 'scenario', min: 0, max: 1000, step: 10, def: 150},
+    {id: 'cCell', label: 'Cellular layout cost', unit: '$/day', role: 'scenario', min: 0, max: 1000, step: 10, def: 30},
+    {id: 'cPoka', label: 'Poka-yoke cost', unit: '$/day', role: 'scenario', min: 0, max: 1000, step: 5, def: 10}
+  ],
+  objective: {key: 'total', dir: 'min'},
+  kpis: [
+    {key: 'total', label: 'Total daily cost', fmt: 'money', better: 'low', primary: true},
+    {key: 'leadH', label: 'Lead time (hours)', fmt: 'n1', better: 'low'},
+    {key: 'pce', label: 'Process cycle efficiency', fmt: 'pct', better: 'high'},
+    {key: 'wip', label: "WIP (units, Little's Law)", fmt: 'n1', better: 'low'},
+    {key: 'th', label: 'Throughput (units/day)', fmt: 'n1', better: 'high'},
+    {key: 'bnU', label: 'Bottleneck utilization', fmt: 'pct', better: null},
+    {key: 'takt', label: 'Takt time (min/unit)', fmt: 'n2', better: null},
+    {key: 'std', label: 'Assembly standard time (min)', fmt: 'n2', better: null}
+  ],
+  simulate(p) {
+    const std = p.obs * p.rating / 100 * (1 + p.allow / 100);
+    const sf = p.smed ? 0.4 : 1, Q = p.Q, c2 = p.cv;
+    const st = [
+      {name: 'Cutting', t: p.tc, S: p.Sc * sf, va: true},
+      {name: 'Assembly', t: std, S: p.Sa * sf, va: true},
+      ...(p.poka ? [] : [{name: 'Inspection', t: p.ti, S: 0, va: false}]),
+      {name: 'Packing', t: p.tp, S: p.Sp * sf, va: true}
+    ];
+    st.forEach(s => { s.e = s.t + s.S / Q; });
+    const maxE = Math.max(...st.map(s => s.e)), bn = st.find(s => s.e === maxE);
+    const capacity = p.T / maxE;
+    const overloaded = p.D * maxE / p.T >= 0.98;
+    const th = overloaded ? 0.98 * capacity : p.D; // release is throttled when the line is overloaded
+    const takt = p.T / p.D, releaseGap = p.T / th;
+    let queue = 0, setup = 0, batchProc = 0, nvaProc = 0;
+    st.forEach(s => {
+      s.u = th * s.e / p.T;
+      s.batch = s.S + Q * s.t;
+      s.q = c2 * (s.u / (1 - s.u)) * s.batch;
+      queue += s.q; setup += s.S; batchProc += (Q - 1) * s.t;
+      if (!s.va) nvaProc += s.t;
+    });
+    const va = sum(st.filter(s => s.va).map(s => s.t));
+    const formation = (Q - 1) / 2 * releaseGap;
+    const transport = p.move * (p.cell ? 0.2 : 1); // one inter-department move (cutting → assembly)
+    const lead = p.od + formation + queue + setup + batchProc + va + nvaProc + transport;
+    const leadH = lead / 60, wip = th * lead / p.T;
+    const lost = Math.max(0, p.D - th);
+    const improve = (p.smed ? p.cSmed : 0) + (p.cell ? p.cCell : 0) + (p.poka ? p.cPoka : 0);
+    const delayCost = th * leadH * p.dc, lostCost = lost * p.margin;
+    return {std, takt, th, lost, capacity, overloaded, bnName: bn.name, bnU: bn.u, bnE: maxE, stations: st,
+      lead, leadH, wip, va, pce: va / lead, delayCost, lostCost, improve, total: delayCost + lostCost + improve,
+      parts: {va, setup, batch: formation + batchProc, queue, other: p.od + transport + nvaProc}};
+  },
+  alternatives(p) {
+    return [
+      {name: 'Bigger batches (×2)', why: 'Fewer setups, more batch waiting', p: {...p, Q: Math.min(100, p.Q * 2)}},
+      {name: 'Smaller batches (half)', why: 'Less batch waiting, more setups', p: {...p, Q: Math.max(1, Math.round(p.Q / 2))}},
+      {name: 'SMED + small batches (Q = 10)', why: 'Shorter setups make small batches feasible', p: {...p, smed: true, Q: 10}},
+      {name: 'Full lean: SMED + cell + poka-yoke, Q = 8', why: 'Attack every kind of waiting', p: {...p, smed: true, cell: true, poka: true, Q: 8}}
+    ];
+  },
+  search(p) {
+    let best = null, n = 0;
+    for (const smed of [false, true]) for (const cell of [false, true]) for (const poka of [false, true]) for (let Q = 1; Q <= 100; Q++) {
+      n++; const q = {...p, Q, smed, cell, poka}; const r = this.simulate(q);
+      if (!best || r.total < best.r.total - 1e-9) best = {p: q, r};
+    }
+    return {name: 'Optimizer: batch size × lean options', why: `${n} combinations of batch size (1–100) and the three improvements evaluated`, p: best.p, n};
+  },
+  describe: p => `Batch ${p.Q}${p.smed ? ' · SMED' : ''}${p.cell ? ' · cell' : ''}${p.poka ? ' · poka-yoke' : ''}`,
+  diagnose(p, r) {
+    const out = [], P = r.parts;
+    if (r.overloaded) out.push({sev: 'high', code: 'overload', title: 'Batches too small for these setup times', text: `${r.bnName} needs ${F.n2(r.bnE)} min per unit including setups, above the takt time of ${F.n2(r.takt)} min. The line can make only ${F.n1(r.th)} of ${p.D} units/day (${F.money(r.lostCost)} margin lost).`});
+    if (P.batch > 0.3 * r.lead) out.push({sev: 'high', code: 'bigbatch', title: 'Large batches inflate lead time', text: `${F.pct(P.batch / r.lead)} of lead time is units waiting for the rest of their batch of ${p.Q}.`});
+    if (P.queue > 0.4 * r.lead) out.push({sev: 'high', code: 'queue', title: `Queueing at ${r.bnName} dominates`, text: `${r.bnName} runs at ${F.pct(r.bnU)} utilization, so queues make up ${F.pct(P.queue / r.lead)} of lead time (u/(1−u) = ${F.n1(r.bnU / (1 - r.bnU))}).`});
+    if (!p.smed && (p.Sa + p.Sc) > 30 && p.Q >= 20) out.push({sev: 'med', code: 'setup', title: 'Long setups force big batches', text: `Setups of ${p.Sc} and ${p.Sa} min at cutting and assembly make small batches too costly in capacity. SMED would change that trade-off.`});
+    if (!p.cell && p.move > 0 && P.other > 0.1 * r.lead) out.push({sev: 'med', code: 'transport', title: 'Transport and admin delays', text: `Order entry, transport and inspection add ${F.n1(P.other / 60)} hours that add no value.`});
+    if (r.pce < 0.05) out.push({sev: 'med', code: 'pce', title: 'Very low process cycle efficiency', text: `Only ${F.n1(r.va)} min of the ${F.n1(r.leadH)}-hour lead time is value-added (PCE ${F.pct(r.pce)}).`});
+    if (p.rating !== 100 || p.allow > 0) out.push({sev: 'ok', code: 'timestudy', title: 'Time study applied', text: `Assembly standard time = ${p.obs} × ${p.rating}% × (1 + ${p.allow}%) = ${F.n2(r.std)} min, against an observed ${p.obs} min.`});
+    if (!out.some(i => i.sev !== 'ok')) out.push({sev: 'ok', code: 'flow', title: 'Good flow', text: `Lead time ${F.n1(r.leadH)} h, PCE ${F.pct(r.pce)}, WIP ${F.n1(r.wip)} units.`});
+    return out;
+  },
+  lessons: {
+    overload: 'Batch size has a capacity floor: (t + S/Q) at the bottleneck must stay below takt time, or demand goes unmet.',
+    bigbatch: 'In batch flow each unit waits for its whole batch, so lead time grows roughly in proportion to batch size.',
+    queue: "Queue time grows like u/(1−u): near full utilization, small capacity losses create very long waits (Kingman's formula).",
+    setup: 'Setup reduction (SMED) is what makes small batches, short lead times and flexibility possible.',
+    transport: 'Transport, inspection and paperwork are non-value-added. Cells and source quality remove them instead of speeding them up.',
+    pce: 'Typical process cycle efficiency is below 5%: improving flow usually means removing waiting, not working faster.',
+    timestudy: 'Standard time = observed × rating × (1 + allowance). Plans built on raw observed times understate capacity needs.',
+    flow: "Little's Law (WIP = throughput × lead time) means cutting lead time also cuts inventory."
+  },
+  explain(p, r, b) {
+    return `The recommended plan is <b>${this.describe(b.p)}</b>. Lead time goes from ${F.n1(r.leadH)} h to ${F.n1(b.r.leadH)} h and PCE from ${F.pct(r.pce)} to ${F.pct(b.r.pce)}. By Little's Law, WIP falls from ${F.n1(r.wip)} to ${F.n1(b.r.wip)} units. Its improvements cost ${F.money(b.r.improve)}/day against ${F.money(r.improve)}, and its bottleneck (${b.r.bnName}) runs at ${F.pct(b.r.bnU)} utilization against a takt time of ${F.n2(r.takt)} min.`;
+  },
+  chart(r, b) {
+    const stacks = [['Value-added', 'var(--s3)', 'va'], ['Setup', 'var(--s4)', 'setup'], ['Waiting for batch', 'var(--you)', 'batch'], ['Queue', 'var(--ai)', 'queue'], ['Transport, admin, inspection', 'var(--s5)', 'other']];
+    const h = v => v / 60;
+    return legend(stacks.map(s => [s[0], s[1]])) + stackedBars({categories: ['You', 'AI recommendation'], stacks: stacks.map(s => ({name: s[0], color: s[1], values: [h(r.parts[s[2]]), h(b.parts[s[2]])]})), fmt: v => F.n1(v) + ' h', axis: v => shortNum(v) + ' h', label: 'Lead time breakdown'});
+  },
+  chartTitle: 'Where the lead time goes (hours per unit)'
 }
+
 ];
 const TOPIC = Object.fromEntries(TOPICS.map(t => [t.id, t]));
 
@@ -1143,24 +1282,24 @@ function gantt(groups) {
   g += `<text x="${L + pw / 2}" y="${Hh + 10}" text-anchor="middle">Day</text>`;
   return `<svg class="chart" viewBox="0 0 ${W} ${Hh + 14}" role="img" aria-label="Gantt chart">${g}</svg>`;
 }
-function stackedBars({categories, stacks}) {
+function stackedBars({categories, stacks, fmt = F.money, axis = v => '$' + shortNum(v), label = 'Cost of quality breakdown'}) {
   const W = 640, Hh = 250, L = 140, R = 70, Tp = 10, B = 26, pw = W - L - R;
   const totals = categories.map((_, i) => sum(stacks.map(s => s.values[i])));
   const max = niceMax(Math.max(...totals) * 1.02), X = v => L + v / max * pw;
   const bh = 52, gap = (Hh - Tp - B - bh * categories.length) / Math.max(1, categories.length);
   let g = '';
-  ticks(max).forEach(t => { g += `<line class="gridl" x1="${X(t)}" x2="${X(t)}" y1="${Tp}" y2="${Hh - B}"/><text x="${X(t)}" y="${Hh - B + 16}" text-anchor="middle">$${shortNum(t)}</text>`; });
+  ticks(max).forEach(t => { g += `<line class="gridl" x1="${X(t)}" x2="${X(t)}" y1="${Tp}" y2="${Hh - B}"/><text x="${X(t)}" y="${Hh - B + 16}" text-anchor="middle">${axis(t)}</text>`; });
   categories.forEach((c, i) => {
     const y = Tp + gap / 2 + i * (bh + gap); let acc = 0;
     g += `<text x="${L - 10}" y="${y + bh / 2 + 4}" text-anchor="end" style="fill:var(--ink);font-weight:600">${esc(c)}</text>`;
     stacks.forEach(s => {
       const v = s.values[i]; if (v <= 0) return;
       const x = X(acc), w = X(acc + v) - x; acc += v;
-      g += `<rect x="${x}" y="${y}" width="${Math.max(0, w - 2)}" height="${bh}" rx="3" fill="${s.color}" data-tip="${esc(c)} · ${esc(s.name)}\n${F.money(v)} (${F.pct(v / totals[i])})"/>`;
+      g += `<rect x="${x}" y="${y}" width="${Math.max(0, w - 2)}" height="${bh}" rx="3" fill="${s.color}" data-tip="${esc(c)} · ${esc(s.name)}\n${fmt(v)} (${F.pct(v / totals[i])})"/>`;
     });
-    g += `<text x="${X(totals[i]) + 6}" y="${y + bh / 2 + 4}" style="fill:var(--ink);font-weight:700">${F.money(totals[i])}</text>`;
+    g += `<text x="${X(totals[i]) + 6}" y="${y + bh / 2 + 4}" style="fill:var(--ink);font-weight:700">${fmt(totals[i])}</text>`;
   });
-  return `<svg class="chart" viewBox="0 0 ${W} ${Hh}" role="img" aria-label="Cost of quality breakdown">${g}</svg>`;
+  return `<svg class="chart" viewBox="0 0 ${W} ${Hh}" role="img" aria-label="${esc(label)}">${g}</svg>`;
 }
 
 /* ---------------- 5. UI & state ---------------- */
@@ -1214,7 +1353,7 @@ function renderTopic(t) {
   const dec = t.params.filter(x => x.role === 'decision'), scn = t.params.filter(x => x.role === 'scenario');
   const learnOpen = runs.length === 0 ? 'open' : '';
   let html = `<section class="card">
-    <div class="thead"><div class="t"><div class="small muted" style="font-weight:700">TOPIC ${t.num} OF 6</div><h2>${esc(t.name)}</h2><p class="role"><b>Your role:</b> ${esc(t.role)}</p></div></div>
+    <div class="thead"><div class="t"><div class="small muted" style="font-weight:700">TOPIC ${t.num} OF ${TOPICS.length}</div><h2>${esc(t.name)}</h2><p class="role"><b>Your role:</b> ${esc(t.role)}</p></div></div>
     <details class="learn" ${learnOpen}><summary>Concept &amp; formulas</summary>
       <div class="learn-grid"><div>${t.concept}</div><div class="formula">${t.formulas.map(([a, b]) => `<div><b>${esc(a)}</b>${esc(b)}</div>`).join('')}</div></div>
     </details>
@@ -1397,7 +1536,7 @@ function reportHTML() {
   let html = `<section class="card doc"><div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><div style="flex:1"><h2>End-of-run report</h2><p class="muted" style="margin:0">Prepared by the rule-based AI Operations Agent from your logged runs · ${new Date().toLocaleString()}</p></div><button class="btn primary noprint" id="printBtn">Print / save as PDF</button></div>`;
   if (!used.length) return html + `<div class="empty" style="margin-top:14px">No runs yet. Run at least one simulation and the report fills in automatically.</div></section>`;
   const overall = sum(used.map(t => bestRun(t).analysis.eff)) / used.length;
-  html += `<div class="callout"><b>Summary:</b> ${used.length} of 6 topics attempted, ${sum(used.map(t => state.runs[t.id].length))} runs in total. Averaging your best run per topic, you reached <b>${F.pct(overall)}</b> of the agent's best option.</div>`;
+  html += `<div class="callout"><b>Summary:</b> ${used.length} of ${TOPICS.length} topics attempted, ${sum(used.map(t => state.runs[t.id].length))} runs in total. Averaging your best run per topic, you reached <b>${F.pct(overall)}</b> of the agent's best option.</div>`;
   used.forEach(t => {
     const runs = state.runs[t.id], k = t.kpis.find(k => k.key === t.objective.key);
     const first = runs[0], best = bestRun(t), last = runs[runs.length - 1];
@@ -1440,6 +1579,7 @@ function guideHTML() {
     <li>Use the cost-of-quality framework to weigh prevention, appraisal and failure costs.</li>
     <li>Staff a service system using utilization, Erlang C, Little's Law and service-level targets.</li>
     <li>Design supply-chain resilience with buffer stock, dual sourcing and contingency plans.</li>
+    <li>Analyse process time: takt time, lead time, process cycle efficiency, batch size and Little's Law, with a time study for standard time.</li>
     <li>Use analytics (what-if testing, optimization, diagnosis) to evaluate operational decisions.</li></ol>
   <h3>Suggested 75-minute session</h3><table class="tbl"><thead><tr><th>Time</th><th>Activity</th></tr></thead><tbody>
     <tr><td>0–10</td><td>Introduce the role: students are operations managers. Show the layout: decisions (blue) vs scenario inputs.</td></tr>
@@ -1452,7 +1592,8 @@ function guideHTML() {
     <li><b>Scheduling:</b> Which rule minimizes average flow time, and which minimizes lateness? Why is the makespan always the same?</li>
     <li><b>Quality:</b> At what external failure cost does 100% inspection become worthwhile? Why does prevention beat inspection here?</li>
     <li><b>Queues:</b> Why does going from 4 to 5 servers cut waiting so much more than going from 5 to 6?</li>
-    <li><b>Disruption:</b> Set duration to 0. Which strategy wastes the most money? How do you price resilience?</li></ul>
+    <li><b>Disruption:</b> Set duration to 0. Which strategy wastes the most money? How do you price resilience?</li>
+    <li><b>Process time:</b> Why does halving the batch size first cut lead time and then suddenly make it explode? What does SMED change? What share of the lead time is value-added?</li></ul>
   <h3>How the AI agent works</h3>
   <p>The agent is a <b>rule-based, deterministic</b> expert system that runs in the browser. No LLM is used, and the label in the header says so. After every run it:</p>
   <ol><li><b>Tracks</b> the decisions you changed and the resulting KPI movement.</li>
@@ -1514,7 +1655,7 @@ function saveLLM() {
 }
 const getChat = id => (LLM.chats[id] = LLM.chats[id] || {view: [], api: [], sig: null, grounded: false});
 
-const LLM_SYSTEM = `You are the OpsLab Operations Coach, a live AI agent inside a classroom simulator for an MBA Operations Management course. The student plays an operations manager. Six topics exist: bottleneck & capacity, inventory management, production scheduling, quality management, queue management, supply chain disruption. Each user message says which topic the student is on.
+const LLM_SYSTEM = `You are the OpsLab Operations Coach, a live AI agent inside a classroom simulator for an MBA Operations Management course. The student plays an operations manager. Seven topics exist: bottleneck & capacity, inventory management, production scheduling, quality management, queue management, supply chain disruption, process time analytics (takt, lead time, batch size, PCE, Little's Law, time study). Each user message says which topic the student is on.
 
 How to work:
 - Call get_current_state first to see the inputs, the student's latest run and the rule-based agent's best alternative.
@@ -1958,13 +2099,13 @@ function dashHTML() {
   const d = ROOM.dash, pr = ROOM.prof;
   if (ROOM.msg.dash) return `<div class="msg error">${esc(ROOM.msg.dash.text)}</div>`;
   if (!d) return '<div class="empty">Loading dashboard…</div>';
-  const n = d.students.length, runs = d.students.reduce((a, s) => a + s.runs, 0), avg = n ? d.students.reduce((a, s) => a + s.score, 0) / n / 6 : 0;
+  const n = d.students.length, runs = d.students.reduce((a, s) => a + s.runs, 0), avg = n ? d.students.reduce((a, s) => a + s.score, 0) / n / d.topics.length : 0;
   const kp = (l, v) => `<div class="kpi"><div class="l">${l}</div><div class="v">${v}</div></div>`;
   return `<div class="kpis">${kp('Students joined', `${n}${d.room.roster ? ` / ${d.room.roster}` : ''}`)}${kp('Runs submitted', F.int(runs))}${kp('Class average', F.pct(avg))}${kp('Room', d.room.closed ? 'Closed' : 'Open')}</div>
     <h3 style="margin-top:16px">By topic</h3><div class="scroll-x"><table class="tbl"><thead><tr><th>Topic</th><th class="n">Attempted</th><th class="n">Avg first run</th><th class="n">Avg best run</th><th>Most common mistakes (students)</th></tr></thead><tbody>
     ${d.topicStats.map(ts => `<tr><td><b>${esc(ts.name)}</b></td><td class="n">${ts.attempted}</td><td class="n">${effCell(ts.avgFirst)}</td><td class="n">${effCell(ts.avgBest)}</td><td>${ts.topIssues.length ? ts.topIssues.map(i => `<span class="chg">${esc(i.title)} · ${i.students}</span>`).join('') : '<span class="muted">–</span>'}</td></tr>`).join('')}
     </tbody></table></div>
-    <h3 style="margin-top:16px">Leaderboard <span class="sub">score = sum of best % of optimum per topic (standard scenario only), out of 6</span></h3>
+    <h3 style="margin-top:16px">Leaderboard <span class="sub">score = sum of best % of optimum per topic (standard scenario only), out of ${d.topics.length}</span></h3>
     ${n ? `<div class="scroll-x"><table class="tbl"><thead><tr><th>#</th><th>Roll</th><th>Name</th><th class="n">Score</th>${d.topics.map(t => `<th class="n">${esc(t.short)}</th>`).join('')}<th class="n">Runs</th><th>Last active</th><th></th></tr></thead><tbody>
       ${d.students.map(s => `<tr><td>${s.rank}</td><td class="mono">${esc(s.roll)}</td><td>${esc(s.name || '')}</td><td class="n"><b>${s.score.toFixed(2)}</b></td>${d.topics.map(t => `<td class="n" title="${s.perTopic[t.id].runs} run(s)${s.perTopic[t.id].bestValue ? ' · best ' + esc(s.perTopic[t.id].bestValue) : ''}">${effCell(s.perTopic[t.id].best)}</td>`).join('')}<td class="n">${s.runs}</td><td class="small muted">${ago(s.lastSeen)}</td><td><button class="btn ghost small" data-reset="${esc(s.roll)}" title="Let this roll number join again from a new device">Reset device</button></td></tr>`).join('')}
     </tbody></table></div>` : '<div class="empty">No students yet. Share the room code and address above.</div>'}
@@ -1992,7 +2133,7 @@ function roomHTML() {
     const st = s.standing;
     student = `<p style="margin:0">Joined <b>${esc(s.roomName || s.code)}</b> (code <span class="mono">${esc(s.code)}</span>) as <b class="mono">${esc(s.roll)}</b>${s.name ? ` · ${esc(s.name)}` : ''}.</p>
       <p class="small muted">Every run you make is sent automatically. The server re-computes it, so only real results count. Runs with a changed scenario are recorded as practice and don't count for the leaderboard.</p>
-      ${st ? `<div class="kpis"><div class="kpi primary"><div class="l">Your rank</div><div class="v">${st.rank} / ${st.of}</div></div><div class="kpi"><div class="l">Score (out of 6)</div><div class="v">${st.score.toFixed(2)}</div></div></div>
+      ${st ? `<div class="kpis"><div class="kpi primary"><div class="l">Your rank</div><div class="v">${st.rank} / ${st.of}</div></div><div class="kpi"><div class="l">Score (out of ${TOPICS.length})</div><div class="v">${st.score.toFixed(2)}</div></div></div>
         <div class="scroll-x" style="margin-top:8px"><table class="tbl"><thead><tr><th>Topic</th><th class="n">Runs</th><th class="n">Your best</th></tr></thead><tbody>${TOPICS.map(t => `<tr><td>${esc(t.name)}</td><td class="n">${st.perTopic[t.id].runs}</td><td class="n">${effCell(st.perTopic[t.id].best)}</td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">Run any simulation: your results appear here.</div>'}
       ${s.needsRejoin ? '<div class="msg error" style="margin-top:8px">The server no longer recognises this device. Leave the room and join again (ask your professor to reset your roll number if needed).</div>' : ''}
       <div class="actions">${s.pending && s.pending.length ? `<button class="btn primary" id="roomSync">Send ${s.pending.length} unsent run(s)</button>` : ''}<button class="btn" id="roomStanding">↻ Refresh my standing</button><button class="btn ghost" id="roomLeave">Leave room</button></div>${msg('student')}`;

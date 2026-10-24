@@ -75,9 +75,10 @@ const ISSUE_LABELS = {
   late: 'Jobs finish late', fcfs: 'Used FCFS sequencing', lpt: 'Used LPT sequencing', flow: 'Flow time above SPT', swap: 'Long job blocks an urgent job',
   escape: 'Defects reach customers', noprev: 'No prevention spend', overinspect: 'Inspection costs more than it saves', appraisal: 'Appraisal-heavy quality system', overprev: 'Prevention past its useful limit',
   unstable: 'Unstable queue (too few servers)', sl: 'Service-level target missed', highutil: 'Servers run too hot', overstaff: 'Overstaffed', waitcost: 'Waiting cost exceeds wages',
-  stockout: 'Stockouts during the disruption', nocont: 'No contingency plan', slow: 'Contingency response too slow', capacity: 'Backup capacity too small', premium: 'Dual-sourcing premium too large', overbuffer: 'Buffer larger than needed', overhang: 'Post-disruption inventory overhang'
+  stockout: 'Stockouts during the disruption', nocont: 'No contingency plan', slow: 'Contingency response too slow', capacity: 'Backup capacity too small', premium: 'Dual-sourcing premium too large', overbuffer: 'Buffer larger than needed', overhang: 'Post-disruption inventory overhang',
+  overload: 'Batches too small: capacity below demand', bigbatch: 'Large batches inflate lead time', queue: 'Queueing at the bottleneck dominates', setup: 'Long setups force big batches', transport: 'Transport and admin delays', pce: 'Very low process cycle efficiency'
 };
-const IGNORE_ISSUES = new Set(['shift']); // informational only
+const IGNORE_ISSUES = new Set(['shift', 'timestudy']); // informational only
 
 // ---------- storage ----------
 let DB = {rooms: {}};
@@ -125,7 +126,7 @@ function dashboard(room) {
     topics: ENGINE.TOPICS.map(t => ({id: t.id, name: t.name, short: t.short})), students, topicStats, generated: Date.now()};
 }
 function csv(room) {
-  const d = dashboard(room), head = ['Rank', 'Roll', 'Name', 'Score (of 6)', 'Runs', ...d.topics.flatMap(t => [`${t.short} best %`, `${t.short} runs`]), 'Last seen'];
+  const d = dashboard(room), head = ['Rank', 'Roll', 'Name', `Score (of ${d.topics.length})`, 'Runs', ...d.topics.flatMap(t => [`${t.short} best %`, `${t.short} runs`]), 'Last seen'];
   const q = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
   const rows = d.students.map(s => [s.rank, s.roll, s.name, s.score.toFixed(3), s.runs, ...d.topics.flatMap(t => [s.perTopic[t.id].best === null ? '' : (s.perTopic[t.id].best * 100).toFixed(1), s.perTopic[t.id].runs]), new Date(s.lastSeen).toISOString()]);
   (d.room.missing || []).forEach(r => rows.push(['', r, '(not joined)', 0, 0, ...d.topics.flatMap(() => ['', 0]), '']));

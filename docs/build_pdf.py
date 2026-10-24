@@ -85,6 +85,9 @@ topics = [
  ('3.6 Supply Chain Disruption', '60-day daily simulation with a base-stock policy. The primary supplier shuts down on days 10–24. Decisions: backup supplier share (dual sourcing), buffer stock (days), contingency plan on/off and response time. Objective: minimize backup premium + holding + lost margin.',
   [['Order-up-to', 'S = d × L_eff + SS'], ['Daily order', 'max(0, S − inventory position)'], ['Stuck orders', 'arrive at end of outage + L₁'], ['Emergency cap', 'β·d + spare backup capacity'], ['Cost', 'premium × backup units + holding + lost units × margin']],
   'Default (single source, 3-day buffer, no plan) costs $20,976 with 480 units lost. The agent tests 1,716 combinations and finds 10% dual sourcing, a 5-day buffer and a 1-day contingency switch: $5,524, 100% fill rate.'),
+ ('3.7 Process Time Analytics', 'Order-to-ship flow: order entry → cutting → transport → assembly → inspection → packing, 60 units/day in 480 min. Assembly time comes from a time study (observed 5.0 min × 110% rating × 1.15 allowance = 6.32 min). Decisions: batch size, SMED (setups −60%), cellular layout (transport −80%), poka-yoke (removes final inspection). Objective: minimize daily cost of lead time + unmet demand + improvements.',
+  [['Standard time', 'observed × rating × (1 + allowance)'], ['Takt time', 'available time ÷ demand'], ['Utilization', 'u = D × (t + S/Q) ÷ T'], ['Queue (Kingman)', '((ca²+ce²)/2) × u/(1−u) × (S + Q·t)'], ['Lead time', 'order delay + (Q−1)/2·takt + Σ(queue + S + Q·t) + transport'], ['PCE / Little', 'PCE = VA ÷ LT,  WIP = TH × LT']],
+  'Default batch 40 gives a 43.4-hour lead time, PCE 0.4%, 325 units of WIP and $2,601/day. Small batches overload assembly unless setups are cut. The agent tests 800 combinations and finds batch 9 with SMED, cell and poka-yoke: 14.6 hours, 110 units of WIP, $1,068/day.'),
 ]
 for name, desc, f, res in topics:
     s.append(KeepTogether([P(name, 'h2'), P(desc), table([['Quantity', 'Formula']] + f, [W * 0.28, W * 0.72], mono_cols=(1,)), Spacer(1, 3), P('<b>Default vs agent:</b> ' + res)]))
@@ -125,7 +128,7 @@ s += [P('Optional live AI agent (LLM chat)', 'h2'),
 s += [P('Optional class room', 'h2'),
       P('One command on the professor’s laptop, <b>node tools/opslab-server.mjs</b> (Node 18+, no dependencies), turns OpsLab into a class activity on the local network. The professor creates a room (optionally restricted to a pasted roll-number list) and shares a 6-character code. Students open the printed address, join with the code and their roll number, and every run is submitted automatically.'),
       table([['Feature', 'How it works'],
-             ['Live dashboard', 'Best % of optimum per student and topic, leaderboard (score out of 6), class first-run vs best-run averages, most common mistakes per topic, students not yet joined; refreshes every 10 s.'],
+             ['Live dashboard', 'Best % of optimum per student and topic, leaderboard (score out of 7), class first-run vs best-run averages, most common mistakes per topic, students not yet joined; refreshes every 10 s.'],
              ['Fair results', 'The server loads the simulation engine from opslab.html and re-computes every run from the submitted decisions; out-of-range inputs are rejected. Only standard-scenario runs count for the leaderboard.'],
              ['Identity', 'One device per roll number (token-based); the professor can reset a device. Roll numbers outside the class list are refused.'],
              ['Robustness', 'Runs made while the server is unreachable are queued and sent later; data is saved to opslab-rooms.json; rooms can be closed and reopened.'],

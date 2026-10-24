@@ -13,6 +13,7 @@ A classroom simulator for MBA Operations Management / Operations Analytics, deli
 | 4 | Quality Management | inspection coverage, prevention spend | min cost of quality |
 | 5 | Queue Management | number of servers | min cost, meeting a service-level target |
 | 6 | Supply Chain Disruption | dual-sourcing share, buffer stock, contingency plan | min disruption cost |
+| 7 | Process Time Analytics | batch size, SMED, cellular layout, poka-yoke (time study sets assembly time) | min daily cost of lead time + lost output + improvements |
 
 Each topic has adjustable inputs with working defaults, **Run / Run again**, **Reset topic**, KPI cards, a chart, a before/after table, a decision history, and a concept and formulas panel.
 
@@ -58,7 +59,7 @@ node tools/opslab-server.mjs      # prints "Students open: http://<laptop-ip>:87
 ```
 1. **Professor:** open the printed address → **Class room** → *Create room*. Optionally paste the class roll-number list so only listed students can join. Share the 6-character room code. Keep the professor key to reopen the dashboard on another device.
 2. **Students:** open the same address (same Wi-Fi or hotspot) → **Class room** → enter the room code and roll number. Every run is then submitted automatically.
-3. **Dashboard:** each student's best % of optimum per topic, a leaderboard (score out of 6), class averages (first run vs best run), the most common mistakes per topic, who hasn't joined, *Reset device*, *Close room*, and **CSV export** for grading. It refreshes every 10 s.
+3. **Dashboard:** each student's best % of optimum per topic, a leaderboard (score out of 7, one point per topic), class averages (first run vs best run), the most common mistakes per topic, who hasn't joined, *Reset device*, *Close room*, and **CSV export** for grading. It refreshes every 10 s.
 
 Fair play: the server **re-computes every run** from the student's decisions with the same engine, so results can't be faked. Only runs on the standard scenario count for the leaderboard (changed-scenario runs show as practice). Each roll number is tied to one device until the professor resets it. Runs made while the server is unreachable are queued and can be sent later. Data is saved in `opslab-rooms.json`. The server also includes the LLM proxy, so NVIDIA works without running `llm-proxy.mjs` separately: set the proxy URL to the server address.
 

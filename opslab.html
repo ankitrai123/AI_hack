@@ -138,6 +138,15 @@ details.exhibit summary{cursor:pointer;font-weight:700;font-size:13px}
 .tsa-table{max-height:280px;overflow:auto}
 pre.adf{background:var(--panel-2);border:1px solid var(--line);border-radius:9px;padding:10px 12px;font-size:12.5px;line-height:1.45;overflow-x:auto;margin:8px 0}
 .rchip.bad{background:var(--bad-soft);color:var(--bad);border-color:transparent}
+.dropzone{display:flex;flex-direction:column;align-items:center;gap:4px;border:2px dashed var(--line);border-radius:12px;padding:20px;margin-top:12px;cursor:pointer;background:var(--panel-2);text-align:center}
+.dropzone:hover,.dropzone.over{border-color:var(--accent);background:var(--accent-soft)}
+.slide-card{border:1px solid var(--line);border-radius:12px;padding:12px 14px;background:var(--panel-2);min-width:0}
+.slide-imgs{display:flex;flex-wrap:wrap;gap:8px;margin:6px 0}
+.slide-imgs img{max-width:100%;max-height:220px;border-radius:8px;border:1px solid var(--line);background:#fff}
+.notes{max-width:90ch}.notes p,.notes li{font-size:13.5px}.notes .note-h{margin:16px 0 4px;color:var(--accent)}
+.notes code,.msg code{background:var(--panel-2);border:1px solid var(--line);border-radius:5px;padding:0 4px;font-size:12px}
+ol.quiz{padding-left:20px}ol.quiz>li{margin:12px 0}ol.quiz p{margin:0 0 6px}
+.tsa-opt.right{border-color:var(--good);background:var(--good-soft)}.tsa-opt.wrong{border-color:var(--bad);background:var(--bad-soft)}
 .seg{display:inline-flex;margin-top:12px;border:1px solid var(--line);border-radius:10px;overflow:hidden}
 .seg button{border:0;background:var(--panel);color:var(--ink);padding:7px 14px;font-weight:600;font-size:13px}
 .seg button.on{background:var(--accent);color:var(--accent-ink)}
@@ -1441,6 +1450,8 @@ function renderNav() {
   const nav = $('#nav');
   nav.innerHTML = '<div class="group">Simulations</div>' + TOPICS.map(t => `<button data-view="${t.id}" class="${state.view === t.id ? 'active' : ''}"><span class="num">${t.num}</span>${esc(t.name)}<span class="runs">${state.runs[t.id].length ? state.runs[t.id].length + ' run' + (state.runs[t.id].length > 1 ? 's' : '') : ''}</span></button>`).join('') +
     `<button data-view="tsa" class="${state.view === 'tsa' ? 'active' : ''}"><span class="num">${TOPICS.length + 1}</span>Time Series Analysis<span class="runs">${state.tsa ? (state.tsa.step > 8 ? state.tsa.final.score + '/8' : 'step ' + state.tsa.step) : ''}</span></button>` +
+    '<div class="group">Study</div>' +
+    `<button data-view="study" class="${state.view === 'study' ? 'active' : ''}"><span class="num">📚</span>Study Room<span class="runs">${STUDY.decks.length ? STUDY.decks.length + ' deck' + (STUDY.decks.length > 1 ? 's' : '') : ''}</span></button>` +
     '<div class="group">Debrief</div>' +
     `<button data-view="room" class="${state.view === 'room' ? 'active' : ''}"><span class="num">👥</span>Class room<span class="runs">${ROOM.student ? esc(ROOM.student.code) : ROOM.prof ? 'host' : ''}</span></button>` +
     `<button data-view="report" class="${state.view === 'report' ? 'active' : ''}"><span class="num">R</span>Session report</button>` +
@@ -1855,6 +1866,7 @@ function renderMain() {
   if (state.view === 'guide') { main.innerHTML = guideHTML(); return; }
   if (state.view === 'room') { main.innerHTML = roomHTML(); bindRoom(); return; }
   if (state.view === 'tsa') { stopDashTimer(); main.innerHTML = tsaHTML(); bindTSA(); return; }
+  if (state.view === 'study') { stopDashTimer(); main.innerHTML = studyHTML(); bindStudy(); return; }
   stopDashTimer();
   const t = TOPIC[state.view];
   main.innerHTML = renderTopic(t);
@@ -1862,7 +1874,7 @@ function renderMain() {
 }
 function render() {
   renderNav(); renderMain();
-  if (state.view === 'tsa') renderTSAAgent(); else renderAI(TOPIC[state.view] || null);
+  if (state.view === 'tsa') renderTSAAgent(); else if (state.view === 'study') renderStudySide(); else renderAI(TOPIC[state.view] || null);
 }
 
 /* ---------------- 6. Session report & instructor guide ---------------- */
@@ -1937,6 +1949,8 @@ function guideHTML() {
     <li><b>Process time:</b> Why does halving the batch size first cut lead time and then suddenly make it explode? What does SMED change? What share of the lead time is value-added?</li></ul>
   <h3>Topic 8: Time Series Analysis lab</h3>
   <p>A stepwise lab that follows the ARIMA sessions: (1) visualise and judge stationarity, (2) run the ADF test and conclude, (3) choose a transformation, (4) re-test and confirm (or difference again), (5) read the ACF, (6) read the PACF, (7) specify and fit up to three ARIMA models (trained on 335 days, tested on the last 30), and (8) choose the model to forecast with. The Analytics Agent runs only the analyses students request and checks every decision against the evidence. It waits for the student and never advances on its own. Wrong choices are allowed and their consequences show up later, so students learn from the path they took. The debrief reveals the true generating process, an automatic AIC search, a scorecard and a 14-day forecast. The ADF, ACF and PACF numbers match Python statsmodels, so students can repeat the analysis in Colab using the CSV. Use “Mystery dataset” for an exam-style exercise and “New sample” to give each student different data.</p>
+  <h3>Study Room</h3>
+  <p>Students upload your session .pptx in <b>Study Room</b> and get study notes, a slide viewer with visual explanations, quiz practice and slide-grounded Q&amp;A, plus buttons that open the matching OpsLab simulation. Files are read in the browser. Slide text goes only to the LLM the student connects (Ollama keeps it on their laptop). It works offline in a simpler, slide-based form. A good routine is to share the deck after class, ask students to score 80% or more on a quiz, and then play the linked simulation.</p>
   <h3>Scenario Agent and Ollama</h3>
   <p>Every topic has a <b>Scenario Agent</b>: type a brief (or leave it empty) and it writes a new case (title, story and scenario values), or a whole campaign when you pick “Rounds: written by the Scenario Agent”. Values are checked against each input's range and decisions are never changed. Without an LLM, <b>Random case</b> generates rule-based variations. For a free model, click <b>Use Ollama</b>. When students use the class server, your laptop's Ollama serves everyone. Use it to give each team a different case, or to localise cases to your students' industries.</p>
   <h3>Campaign mode (quarters or years)</h3>
@@ -2316,13 +2330,16 @@ function chatHTML(t) {
     if (m.role === 'proposal') return `<div class="msg assistant"><span class="who">Suggested settings</span>${esc(m.text)}<div style="margin-top:6px"><button class="btn small primary" data-apply="${i}">Apply suggested settings</button></div></div>`;
     return `<div class="msg assistant"><span class="who">${m.offline ? 'Rule-based agent' : 'Live AI agent'}</span>${mdLite(m.text)}</div>`;
   }).join('');
-  const provOpts = Object.entries(PROVIDERS).map(([id, pv]) => `<option value="${id}" ${id === a.id ? 'selected' : ''}>${esc(pv.label)}</option>`).join('');
   return `<div class="card" id="chatCard"><h3>Ask the AI agent <span class="live ${live ? 'on' : 'off'}">${live ? '● Live LLM' : '○ Offline (rule-based)'}</span></h3>
     <p class="small muted" style="margin:0">${live ? `Using ${esc(a.label)} · <span class="mono">${esc(a.model)}</span>. It tests ideas by running this simulator, so the numbers it quotes are computed, not guessed.` : 'Connect an LLM below (Claude, NVIDIA, OpenAI, Groq, OpenRouter, Gemini, local Ollama…) to chat with a live agent. Until then, the rule-based agent answers.'}</p>
     ${log ? `<div class="chat-log" id="chatLog">${log}${LLM.busy ? '<div class="msg tool dots">Agent is thinking and running simulations</div>' : ''}</div>` : `<div class="chips">${chips.map(c => `<button class="chip" data-q="${esc(c)}">${esc(c)}</button>`).join('')}</div>`}
     <div class="chat-in" style="margin-top:8px"><textarea id="chatInput" rows="2" placeholder="Ask for a suggestion, e.g. “Should I add a machine at B?”" ${LLM.busy ? 'disabled' : ''}>${esc(LLM.drafts[t.id] || '')}</textarea><button class="btn primary" id="chatSend" ${LLM.busy ? 'disabled' : ''}>Ask</button></div>
     <div style="display:flex;gap:10px;align-items:center;margin-top:4px">${chat.view.length ? '<button class="btn ghost small" id="chatClear">Clear chat</button>' : ''}<span class="small muted" style="margin-left:auto">Enter to send · Shift+Enter for a new line</span></div>
-    <details class="llm-set" id="llmSet" ${LLM.settingsOpen ? 'open' : ''}><summary>Live LLM settings <span class="muted" style="font-weight:500">(chat v4)</span></summary>
+    ${llmSettingsHTML()}</div>`;
+}
+function llmSettingsHTML() {
+  const a = activeLLM(), provOpts = Object.entries(PROVIDERS).map(([id, pv]) => `<option value="${id}" ${id === a.id ? 'selected' : ''}>${esc(pv.label)}</option>`).join('');
+  return `<details class="llm-set" id="llmSet" ${LLM.settingsOpen ? 'open' : ''}><summary>Live LLM settings <span class="muted" style="font-weight:500">(chat v4)</span></summary>
       <div class="row2"><select id="llmProvider" aria-label="Provider">${provOpts}</select></div>
       <div class="row2"><input id="llmModel" list="llmModels" placeholder="Model id" value="${esc(a.model)}" aria-label="Model id" style="flex:1;min-width:150px;border:1px solid var(--line);background:var(--panel-2);color:var(--ink);border-radius:7px;padding:5px 7px;font:inherit;font-size:12.5px"><datalist id="llmModels">${(a.liveModels || a.models).map(m => `<option value="${esc(m)}">`).join('')}</datalist><button class="btn small" id="llmLoad" title="Fetch the current model list from the provider (uses the key and proxy settings)">Load models</button></div>
       ${a.liveModels ? `<div class="row2"><select id="llmPick" aria-label="Available models"><option value="">${a.liveModels.length} models available: pick one…</option>${a.liveModels.map(m => `<option value="${esc(m)}" ${m === a.model ? 'selected' : ''}>${esc(m)}</option>`).join('')}</select></div>` : ''}
@@ -2333,7 +2350,31 @@ function chatHTML(t) {
       <div class="row2"><button class="btn small" id="llmOllama" title="Use a free local model through Ollama">🦙 Use Ollama (free, local)</button>${LLM.ollamaMsg ? `<span class="small ${LLM.ollamaMsg.err ? 'down' : 'muted'}">${esc(LLM.ollamaMsg.text)}</span>` : ''}</div>
       <div class="row2"><label class="small"><input type="checkbox" id="llmRemember" ${LLM.remember ? 'checked' : ''}> Remember keys on this device</label><button class="btn small" id="llmSave">Save</button>${a.key ? '<button class="btn small ghost" id="llmForget">Forget key</button>' : ''}</div>
       <p class="small muted" style="margin:6px 0 0">${a.format === 'anthropic' ? 'Claude Messages API.' : 'OpenAI-compatible chat-completions API with tool calling. Models without tool calling still work: the agent sends pre-computed simulator data instead.'} ${a.browser ? '' : '<b>This provider blocks direct browser calls:</b> run <span class="mono">node tools/llm-proxy.mjs</span> and keep “Use local proxy” ticked. '}${a.id === 'ollama' ? 'Start Ollama with <span class="mono">OLLAMA_ORIGINS="*" ollama serve</span>. ' : ''}Model names change, so check your provider's model list. Keys stay in this browser and go only to the provider (or your local proxy). Use spending-limited keys, and don't tick “Remember” on shared computers.</p>
-    </details></div>`;
+    </details>`;
+}
+function bindLLMSettings(t, rerender) {
+  const set = $('#llmSet'); if (!set) return;
+  set.addEventListener('toggle', e => { LLM.settingsOpen = e.target.open; });
+  const readForm = () => { const c = LLM.cfg[LLM.provider]; c.model = $('#llmModel').value.trim(); c.key = $('#llmKey').value.trim(); c.base = $('#llmBase').value.trim(); c.proxy = $('#llmProxy').checked; LLM.remember = $('#llmRemember').checked; };
+  $('#llmProvider').onchange = e => { readForm(); LLM.provider = e.target.value; LLM.modelMsg = null; LLM.settingsOpen = true; rerender(); };
+  $('#llmSave').onclick = () => {
+    readForm(); saveLLM();
+    logActivity(t, llmLive() ? `Live LLM enabled (${activeLLM().label} · ${activeLLM().model})` : 'Live LLM settings saved (not connected)');
+    LLM.settingsOpen = !llmLive(); rerender();
+  };
+  $('#llmOllama').onclick = async () => { LLM.ollamaMsg = {text: 'Connecting…'}; LLM.settingsOpen = true; rerender(); LLM.ollamaMsg = await useOllama(); rerender(); if (t && state.view === t.id) renderMain(); };
+  $('#llmLoad').onclick = async () => {
+    readForm(); const c = LLM.cfg[LLM.provider];
+    LLM.modelMsg = {text: 'Loading models…'}; LLM.settingsOpen = true; rerender();
+    try {
+      c.liveModels = await loadModels();
+      LLM.modelMsg = {text: `Loaded ${c.liveModels.length} models. Pick one, then Save. Larger instruct/chat models handle tool calling best.`};
+      if (c.liveModels.length && !c.liveModels.includes(c.model)) LLM.modelMsg.text += ` Your current model “${c.model}” is not in the list.`;
+    } catch (e) { LLM.modelMsg = {text: e.message, err: true}; }
+    rerender();
+  };
+  const pick = $('#llmPick'); if (pick) pick.onchange = () => { if (pick.value) $('#llmModel').value = pick.value; };
+  const fg = $('#llmForget'); if (fg) fg.onclick = () => { LLM.cfg[LLM.provider].key = ''; saveLLM(); logActivity(t, 'API key removed'); rerender(); };
 }
 function bindChat(t) {
   const input = $('#chatInput'); if (!input) return;
@@ -2344,7 +2385,6 @@ function bindChat(t) {
   $('#chatSend').onclick = send;
   $$('#chatCard .chip').forEach(c => c.onclick = () => { if (!LLM.busy) askLLM(t, c.dataset.q); });
   const clr = $('#chatClear'); if (clr) clr.onclick = () => { LLM.chats[t.id] = {view: [], api: [], sig: null, grounded: false}; renderAI(t); };
-  $('#llmSet').addEventListener('toggle', e => { LLM.settingsOpen = e.target.open; });
   $$('#chatCard [data-apply]').forEach(b => b.onclick = () => {
     const m = getChat(t.id).view[+b.dataset.apply], p = state.inputs[t.id];
     t.params.filter(x => x.role === 'decision').forEach(x => { p[x.id] = JSON.parse(JSON.stringify(m.p[x.id])); });
@@ -2352,26 +2392,7 @@ function bindChat(t) {
     renderMain(); renderAI(t);
     const rb = $('#runBtn'); if (rb) { rb.focus(); rb.scrollIntoView({block: 'center', behavior: 'smooth'}); }
   });
-  const readForm = () => { const c = LLM.cfg[LLM.provider]; c.model = $('#llmModel').value.trim(); c.key = $('#llmKey').value.trim(); c.base = $('#llmBase').value.trim(); c.proxy = $('#llmProxy').checked; LLM.remember = $('#llmRemember').checked; };
-  $('#llmProvider').onchange = e => { readForm(); LLM.provider = e.target.value; LLM.modelMsg = null; LLM.settingsOpen = true; renderAI(t); };
-  $('#llmSave').onclick = () => {
-    readForm(); saveLLM();
-    logActivity(t, llmLive() ? `Live LLM enabled (${activeLLM().label} · ${activeLLM().model})` : 'Live LLM settings saved (not connected)');
-    LLM.settingsOpen = !llmLive(); renderAI(t);
-  };
-  $('#llmOllama').onclick = async () => { LLM.ollamaMsg = {text: 'Connecting…'}; LLM.settingsOpen = true; renderAI(t); LLM.ollamaMsg = await useOllama(); renderAI(t); if (state.view === t.id) renderMain(); };
-  $('#llmLoad').onclick = async () => {
-    readForm(); const c = LLM.cfg[LLM.provider];
-    LLM.modelMsg = {text: 'Loading models…'}; LLM.settingsOpen = true; renderAI(t);
-    try {
-      c.liveModels = await loadModels();
-      LLM.modelMsg = {text: `Loaded ${c.liveModels.length} models. Pick one, then Save. Larger instruct/chat models handle tool calling best.`};
-      if (c.liveModels.length && !c.liveModels.includes(c.model)) LLM.modelMsg.text += ` Your current model “${c.model}” is not in the list.`;
-    } catch (e) { LLM.modelMsg = {text: e.message, err: true}; }
-    renderAI(t);
-  };
-  const pick = $('#llmPick'); if (pick) pick.onchange = () => { if (pick.value) $('#llmModel').value = pick.value; };
-  const fg = $('#llmForget'); if (fg) fg.onclick = () => { LLM.cfg[LLM.provider].key = ''; saveLLM(); logActivity(t, 'API key removed'); renderAI(t); };
+  bindLLMSettings(t, () => renderAI(t));
 }
 
 /* ---------------- 8. Class room (optional; needs tools/opslab-server.mjs) ----------------
@@ -3217,6 +3238,389 @@ function renderTSAAgent() {
     <div class="ai-section"><h4>Decisions checked</h4><div class="score"><div><div class="big">${ok}/${graded.length || 0}</div><div class="small muted">correct so far</div></div><div style="flex:1"><div class="meter"><i style="width:${graded.length ? ok / graded.length * 100 : 0}%"></i></div></div></div></div>
     <div class="ai-section"><h4>Analysis log (newest first)</h4>${items.map(h => `<div class="issue ${h.kind === 'verdict' ? (h.ok ? 'ok' : 'high') : ''}" ${h.kind === 'you' ? 'style="border-style:dashed"' : ''}><span class="ic">${h.kind === 'you' ? '🧑' : h.kind === 'verdict' ? (h.ok ? '✓' : '!') : '⚙'}</span><div class="small">${h.kind === 'you' ? '<b>You</b> ' : ''}${esc(h.text.replace(/^[✓✗] /, ''))}</div></div>`).join('')}</div>
     <p class="small muted" style="margin:6px 0 0">All statistics are computed in your browser and match Python's statsmodels (adfuller, acf, pacf). The live LLM chat is available on topics 1–7.</p></div>` + activityCard();
+}
+
+/* ---------------- 11. Study Room ----------------
+   Students upload session slides (.pptx). Everything is read in the browser: the .pptx (a zip of XML
+   files) is unzipped with the built-in DecompressionStream, and slide titles, text, tables, images and
+   speaker notes are extracted. Notes, visual explanations, quizzes and Q&A work offline (rule-based)
+   and get better with a connected LLM. Slide text goes only to the LLM the student chooses. */
+const STUDY = {decks: [], active: null, tab: 'notes', slide: 0, busy: false, msg: null, help: [], qDraft: ''};
+const xmlDoc = u8 => new DOMParser().parseFromString(new TextDecoder().decode(u8), 'application/xml');
+const tagText = (el, tag) => [...el.getElementsByTagName(tag)];
+function resolvePath(dir, target) {
+  if (!target) return '';
+  if (target.startsWith('/')) return target.slice(1);
+  const parts = (dir ? dir.split('/') : []).concat(target.split('/')), out = [];
+  parts.forEach(x => { if (x === '..') out.pop(); else if (x && x !== '.') out.push(x); });
+  return out.join('/');
+}
+async function openZip(buf) {
+  const dv = new DataView(buf), u8 = new Uint8Array(buf);
+  let e = buf.byteLength - 22; while (e >= 0 && dv.getUint32(e, true) !== 0x06054b50) e--;
+  if (e < 0) throw new Error('This is not a valid .pptx file (it should be a zip archive).');
+  const count = dv.getUint16(e + 10, true), files = {}; let p = dv.getUint32(e + 16, true);
+  for (let i = 0; i < count && dv.getUint32(p, true) === 0x02014b50; i++) {
+    const nlen = dv.getUint16(p + 28, true), xlen = dv.getUint16(p + 30, true), clen = dv.getUint16(p + 32, true);
+    files[new TextDecoder().decode(u8.subarray(p + 46, p + 46 + nlen))] = {method: dv.getUint16(p + 10, true), csize: dv.getUint32(p + 20, true), lho: dv.getUint32(p + 42, true)};
+    p += 46 + nlen + xlen + clen;
+  }
+  const read = async name => {
+    const f = files[name]; if (!f) return null;
+    const start = f.lho + 30 + dv.getUint16(f.lho + 26, true) + dv.getUint16(f.lho + 28, true), data = u8.subarray(start, start + f.csize);
+    if (f.method === 0) return data;
+    if (f.method !== 8) throw new Error('Unsupported compression in ' + name);
+    return new Uint8Array(await new Response(new Blob([data]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer());
+  };
+  return {names: Object.keys(files), read};
+}
+const paraText = el => tagText(el, 'a:p').map(p => tagText(p, 'a:t').map(t => t.textContent).join('').replace(/[\u200b-\u200d\ufeff]/g, '').replace(/\s+/g, ' ').trim()).filter(Boolean);
+async function parsePptx(file) {
+  const z = await openZip(await file.arrayBuffer());
+  const relsOf = async path => {
+    const dir = path.slice(0, path.lastIndexOf('/')), u = await z.read(`${dir}/_rels/${path.slice(path.lastIndexOf('/') + 1)}.rels`);
+    return u ? tagText(xmlDoc(u), 'Relationship').map(r => ({id: r.getAttribute('Id'), type: r.getAttribute('Type') || '', target: resolvePath(dir, r.getAttribute('Target')), external: r.getAttribute('TargetMode') === 'External'})) : [];
+  };
+  let order = [];
+  const pres = await z.read('ppt/presentation.xml');
+  if (pres) { const rels = await relsOf('ppt/presentation.xml'); order = tagText(xmlDoc(pres), 'p:sldId').map(s => (rels.find(r => r.id === s.getAttribute('r:id')) || {}).target).filter(Boolean); }
+  if (!order.length) order = z.names.filter(n => /^ppt\/slides\/slide\d+\.xml$/.test(n)).sort((a, b) => +a.match(/(\d+)\.xml$/)[1] - +b.match(/(\d+)\.xml$/)[1]);
+  if (!order.length) throw new Error('No slides found in this file.');
+  const mimes = {png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', svg: 'image/svg+xml', webp: 'image/webp', bmp: 'image/bmp'};
+  const slides = [];
+  for (let i = 0; i < order.length && i < 400; i++) {
+    const u = await z.read(order[i]); if (!u) continue;
+    const doc = xmlDoc(u), s = {n: slides.length + 1, title: '', paras: [], tables: [], images: [], notes: ''};
+    for (const sp of tagText(doc, 'p:sp')) {
+      const ph = sp.getElementsByTagName('p:ph')[0], type = ph ? (ph.getAttribute('type') || 'body') : '';
+      const t = paraText(sp);
+      if (/^(title|ctrTitle)$/.test(type) && !s.title) s.title = t.join(' ');
+      else if (!/^(sldNum|dt|ftr|hdr)$/.test(type)) s.paras.push(...t);
+    }
+    for (const tb of tagText(doc, 'a:tbl')) s.tables.push(tagText(tb, 'a:tr').map(tr => tagText(tr, 'a:tc').map(tc => tagText(tc, 'a:t').map(x => x.textContent).join(' ').replace(/\s+/g, ' ').trim())));
+    const rels = await relsOf(order[i]);
+    for (const r of rels.filter(r => /\/image$/.test(r.type) && !r.external)) {
+      if (s.images.length >= 4) break;
+      const mime = mimes[(r.target.split('.').pop() || '').toLowerCase()]; if (!mime) continue;
+      const d = await z.read(r.target); if (d && d.length < 5e6) s.images.push(URL.createObjectURL(new Blob([d], {type: mime})));
+    }
+    const nr = rels.find(r => /notesSlide$/.test(r.type));
+    if (nr) { const nu = await z.read(nr.target); if (nu) s.notes = tagText(xmlDoc(nu), 'p:sp').filter(sp => { const ph = sp.getElementsByTagName('p:ph')[0]; return !ph || (ph.getAttribute('type') || 'body') === 'body'; }).map(sp => paraText(sp).join('\n')).join('\n').trim(); }
+    if (!s.title) s.title = s.paras.length ? s.paras.shift() : (s.tables.length ? 'Table' : `Slide ${s.n}`);
+    s.title = s.title.slice(0, 160);
+    slides.push(s);
+  }
+  // Lines repeated on many slides (course name, author, institute) are boilerplate.
+  const cnt = {}; slides.forEach(s => new Set(s.paras).forEach(p => { cnt[p] = (cnt[p] || 0) + 1; }));
+  const boiler = Object.keys(cnt).filter(p => cnt[p] >= 3 && cnt[p] >= slides.length * 0.3);
+  slides.forEach(s => { s.paras = s.paras.filter(p => !boiler.includes(p)); });
+  return {slides, boiler};
+}
+/* ---- text analytics (offline) ---- */
+const STOP = new Set('a an and are as at be by can for from has have how if in into is it its of on or that the their then there these this to was were what when where which while who why will with within without you your we our they them he she his her not no yes do does did also may might should would could more most less than such each other any all some one two three using use used based per via etc e.g i.e vs about between over under after before during up down out so very just only same both own here new let make made many much well way'.split(' '));
+const words = t => (String(t).toLowerCase().match(/[a-z][a-z0-9'’\-]*[a-z0-9]|[a-z]/g) || []).filter(w => w.length > 1 && !STOP.has(w));
+const slideText = s => [s.title, ...s.paras, ...s.tables.flat(), s.notes].join('\n');
+// Words for key terms: prose only (code lines skipped); short tokens kept only as UPPERCASE acronyms (EOQ, ADF, AR, MA).
+const TERM_STOP = new Set('data model models test value values example code line lines step steps plot plots output result results figure import print using method methods type types case cases number based time series contents session operations analytics slide'.split(' '));
+const termWords = t => (String(t).match(/[A-Za-z][A-Za-z0-9'’\-]*[A-Za-z0-9]|[A-Za-z]/g) || []).filter(w => (w.length >= 3 || /^[A-Z]{2}$/.test(w)) && !/^[a-z]+[A-Z_]|_/.test(w)).map(w => w.toLowerCase()).filter(w => !STOP.has(w) && !TERM_STOP.has(w));
+const proseText = s => [s.title, ...s.paras.filter(p => !isCode(p)), ...s.tables.flat(), s.notes].join('\n');
+function keyTerms(slides, k = 18) {
+  const df = {}, tf = {}, N = slides.length || 1;
+  slides.forEach(s => {
+    const ws = termWords(proseText(s)), titleW = new Set(termWords(s.title)), seen = new Set();
+    const grams = [...ws, ...ws.slice(1).map((w, i) => ws[i] + ' ' + w)];
+    grams.forEach(g => { tf[g] = (tf[g] || 0) + (titleW.has(g) ? 2 : 1); if (!seen.has(g)) { seen.add(g); df[g] = (df[g] || 0) + 1; } });
+  });
+  const score = g => tf[g] * Math.log(1 + N / df[g]) * (g.includes(' ') ? 1.6 : 1);
+  const cand = Object.keys(tf).filter(g => tf[g] >= 2 && !/^\d/.test(g) && !/^(slide|operations analytics|dr|figure|table)$/.test(g)).sort((a, b) => score(b) - score(a));
+  const out = [];
+  for (const g of cand) { if (out.some(o => o.includes(g) || g.includes(o))) continue; out.push(g); if (out.length >= k) break; }
+  return out.map(term => {
+    const hit = slides.find(s => [s.title, ...s.paras].some(p => p.toLowerCase().includes(term)));
+    const sent = hit ? [...hit.paras, hit.title].find(p => p.toLowerCase().includes(term) && p.length > term.length + 15) : null;
+    return {term, slides: slides.filter(s => slideText(s).toLowerCase().includes(term)).map(s => s.n), context: sent || ''};
+  });
+}
+const isCode = l => /^(import |from \w+ import|def |class |print\(|plt\.|pd\.|np\.|#\s)|^\w+(\.\w+)*\s*=\s*\w+(\.\w+)*\(|\)\s*$|^\w+\.\w+\(/.test(l.trim());
+const isFormula = l => !isCode(l) && (/[=≤≥±√Σ∑αβγθφσμλ]/.test(l) && l.length < 160 && /[a-zA-Zα-ω]\s*[=≤≥]|[=≤≥]\s*[a-zA-Z0-9(α-ω]/.test(l));
+// Sections: runs of consecutive slides that share a title (e.g. "Concept of ACF" over three slides).
+function sections(slides) {
+  const out = [];
+  slides.forEach(s => { const key = s.title.replace(/\s*\(?(cont(inued|d)?\.?)\)?\s*$/i, '').trim().toLowerCase(), last = out[out.length - 1];
+    if (last && last.key === key) last.slides.push(s); else out.push({key, title: s.title.replace(/\s*\(?(cont(inued|d)?\.?)\)?\s*$/i, '').trim(), slides: [s]}); });
+  return out;
+}
+const OPS_LINKS = [
+  ['bottleneck', /bottleneck|capacity|utili[sz]ation|throughput|theory of constraints/gi], ['inventory', /inventory|\beoq\b|reorder|safety stock|holding cost|ordering cost/gi],
+  ['scheduling', /schedul|sequenc|dispatch|\bedd\b|\bspt\b|tardiness|makespan/gi], ['quality', /quality|defect|inspection|six sigma|dpmo|cost of quality/gi],
+  ['queue', /queue|queuing|queueing|waiting line|erlang|little'?s law|arrival rate|service rate/gi], ['supply', /supply chain|supplier|disruption|sourcing|contract|bullwhip|resilien/gi],
+  ['leadtime', /lead time|takt|cycle time|batch size|smed|value[- ]added|time study|\bwip\b/gi], ['tsa', /arima|time series|stationar|autocorrel|\bacf\b|\bpacf\b|forecast|exponential smoothing|holt|dickey|\badf\b/gi]];
+function opsLinks(text, min = 2) {
+  return OPS_LINKS.map(([id, re]) => ({id, n: (text.match(re) || []).length})).filter(x => x.n >= min).sort((a, b) => b.n - a.n).slice(0, 3)
+    .map(x => ({...x, name: x.id === 'tsa' ? 'Time Series Analysis lab' : TOPIC[x.id].name}));
+}
+function ruleNotes(deck) {
+  const secs = sections(deck.slides), L = [];
+  L.push(`## Overview`, `${deck.slides.length} slides in ${secs.length} sections${deck.terms.length ? `. Key ideas: ${deck.terms.slice(0, 6).map(t => '**' + t.term + '**').join(', ')}.` : '.'}`);
+  secs.forEach(sec => {
+    const a = sec.slides[0].n, b = sec.slides[sec.slides.length - 1].n;
+    const lines = [...new Set(sec.slides.flatMap(s => s.paras))];
+    const code = lines.filter(isCode), formulas = lines.filter(isFormula), text = lines.filter(l => !isCode(l) && !isFormula(l));
+    if (!text.length && !code.length && !formulas.length && !sec.slides.some(s => s.tables.length || s.images.length)) return;
+    L.push(`## ${sec.title} (slide${a === b ? ' ' + a : 's ' + a + '–' + b})`);
+    text.slice(0, 14).forEach(l => L.push(`- ${l}`));
+    if (formulas.length) { L.push('**Formulas**'); formulas.slice(0, 6).forEach(f => L.push(`- \`${f}\``)); }
+    sec.slides.forEach(s => s.tables.slice(0, 2).forEach(tb => { L.push(`[[table:${s.n}:${s.tables.indexOf(tb)}]]`); }));
+    if (code.length) L.push('```', ...code.slice(0, 12), '```');
+    const notes = sec.slides.map(s => s.notes).filter(Boolean).join(' ');
+    if (notes) L.push(`*Speaker notes:* ${notes.slice(0, 400)}`);
+  });
+  if (deck.terms.length) { L.push('## Glossary of key terms'); deck.terms.slice(0, 14).forEach(t => L.push(`- **${t.term}** (slide ${t.slides.slice(0, 3).join(', ')})${t.context ? ': ' + t.context.slice(0, 180) : ''}`)); }
+  return L.join('\n');
+}
+// Markdown-lite renderer for notes and answers (headings, bullets, numbered lists, code blocks, bold, code, tables from slides).
+function mdBlock(md, deck) {
+  const out = []; let list = null, code = null;
+  const inline = x => esc(x).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/(^|[^*])\*(?!\s)([^*]+?)\*/g, '$1<i>$2</i>').replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\[Slides? (\d+(?:[–-]\d+)?(?:, ?\d+)*)\]/g, '<span class="chg">Slide $1</span>');
+  const flush = () => { if (list) { out.push(`<${list.t}>${list.items.map(i => `<li>${i}</li>`).join('')}</${list.t}>`); list = null; } };
+  String(md).split('\n').forEach(line => {
+    if (code) { if (/^```/.test(line.trim())) { out.push(`<pre class="adf">${esc(code.join('\n'))}</pre>`); code = null; } else code.push(line); return; }
+    if (/^```/.test(line.trim())) { flush(); code = []; return; }
+    const tb = line.match(/^\[\[table:(\d+):(\d+)\]\]$/);
+    if (tb && deck) { flush(); const t = (deck.slides[+tb[1] - 1] || {tables: []}).tables[+tb[2]]; if (t) out.push(`<div class="scroll-x"><table class="tbl ex">${t.map((r, i) => `<tr>${r.map(c => i ? `<td>${esc(c)}</td>` : `<th>${esc(c)}</th>`).join('')}</tr>`).join('')}</table></div>`); return; }
+    const h = line.match(/^(#{1,4})\s+(.*)/); if (h) { flush(); out.push(`<h${Math.min(5, h[1].length + 2)} class="note-h">${inline(h[2])}</h${Math.min(5, h[1].length + 2)}>`); return; }
+    const b = line.match(/^\s*[-*•]\s+(.*)/), nn = line.match(/^\s*\d+[.)]\s+(.*)/);
+    if (b || nn) { const t = b ? 'ul' : 'ol'; if (!list || list.t !== t) { flush(); list = {t, items: []}; } list.items.push(inline((b || nn)[1])); return; }
+    flush(); if (line.trim()) out.push(`<p>${inline(line)}</p>`);
+  });
+  if (code) out.push(`<pre class="adf">${esc(code.join('\n'))}</pre>`);
+  flush(); return out.join('');
+}
+// Retrieval: TF-IDF cosine between the question and each slide.
+function relevantSlides(deck, q, k = 4) {
+  const N = deck.slides.length, docs = deck.slides.map(s => words(slideText(s))), df = {};
+  docs.forEach(d => new Set(d).forEach(w => { df[w] = (df[w] || 0) + 1; }));
+  const vec = ws => { const v = {}; ws.forEach(w => { v[w] = (v[w] || 0) + Math.log(1 + N / (df[w] || 0.5)); }); return v; };
+  const qv = vec(words(q)), qn = Math.sqrt(sum(Object.values(qv).map(x => x * x))) || 1;
+  return docs.map((d, i) => { const v = vec(d), n = Math.sqrt(sum(Object.values(v).map(x => x * x))) || 1; let dot = 0; Object.keys(qv).forEach(w => { if (v[w]) dot += qv[w] * v[w]; }); return {s: deck.slides[i], score: dot / qn / n}; })
+    .filter(x => x.score > 0).sort((a, b) => b.score - a.score).slice(0, k);
+}
+// Offline quiz: fill-in-the-blank questions built from sentences that contain key terms.
+function ruleQuiz(deck, n, from, to) {
+  const r = rng(deck.slides.length * 131 + n * 7 + from + (deck.quizSeed = (deck.quizSeed || 0) + 1) * 977), terms = deck.terms.map(t => t.term), qs = [], used = new Set();
+  const pool = deck.slides.filter(s => s.n >= from && s.n <= to).flatMap(s => [...s.paras, s.notes].filter(Boolean).flatMap(p => p.split(/(?<=[.!?])\s+/)).filter(p => p.length >= 35 && p.length <= 240 && !isCode(p)).map(p => ({p, n: s.n})));
+  pool.sort(() => r() - 0.5);
+  for (const {p, n: sn} of pool) {
+    const term = terms.find(t => p.toLowerCase().includes(t) && !used.has(t)); if (!term) continue;
+    const others = terms.filter(t => t !== term).sort(() => r() - 0.5).slice(0, 3); if (others.length < 3) break;
+    const opts = [term, ...others].sort(() => r() - 0.5);
+    qs.push({q: p.replace(new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'), '_____'), options: opts, answer: opts.indexOf(term), explanation: `From slide ${sn}: “${p}”`, slide: sn});
+    used.add(term); if (qs.length >= n) break;
+  }
+  return qs;
+}
+
+/* ---- Study Room: AI helpers (use the LLM chosen in Live LLM settings) ---- */
+function deckContext(slides, maxChars = 3500) {
+  let out = '';
+  for (const s of slides) {
+    const part = [`[Slide ${s.n}] ${s.title}`, ...s.paras.map(p => '- ' + p), ...s.tables.map(t => 'Table: ' + t.map(r => r.join(' | ')).join(' / ')), s.notes ? 'Speaker notes: ' + s.notes : ''].filter(Boolean).join('\n') + '\n\n';
+    if (out.length + part.length > maxChars && out) break;
+    out += part.slice(0, maxChars);
+  }
+  return out;
+}
+function chunkSlides(slides, maxChars = 3500) {
+  const chunks = []; let cur = [], len = 0;
+  slides.forEach(s => { const l = deckContext([s], 99999).length; if (cur.length && len + l > maxChars) { chunks.push(cur); cur = []; len = 0; } cur.push(s); len += l; });
+  if (cur.length) chunks.push(cur); return chunks;
+}
+const NOTES_SYSTEM = `You are a teaching assistant for an MBA Operations Management / Operations Analytics course. Turn lecture slides into clear, compact study notes for a student revising for an exam.
+Use Markdown: "## " section headings, "- " bullets, **bold** key terms, \`backticks\` for formulas and code, and cite slides like [Slide 4].
+Explain jargon in plain words. Where a formula or method appears, add a one-line intuition and, if useful, a tiny worked example.
+Use only what is on the slides; if you add context that is not on them, mark it "(extra)". Do not invent numbers.
+End with "## Key takeaways" (3-5 bullets).`;
+async function aiNotes(deck, onProgress) {
+  const chunks = chunkSlides(deck.slides), parts = [];
+  for (let i = 0; i < chunks.length; i++) {
+    onProgress(`Writing notes: part ${i + 1} of ${chunks.length} (slides ${chunks[i][0].n}–${chunks[i][chunks[i].length - 1].n})…`);
+    const md = await llmText(NOTES_SYSTEM, `Session file: ${deck.name}\nThis is part ${i + 1} of ${chunks.length}.\n\nSLIDES:\n${deckContext(chunks[i], 6000)}`);
+    parts.push(md.trim());
+  }
+  return parts.join('\n\n');
+}
+const VISUAL_SYSTEM = `You explain one lecture slide visually for an MBA operations student. Reply with ONE JSON object only, no prose, no code fences:
+{"title": "max 8 words", "nodes": [{"id": "a", "label": "max 5 words"}], "edges": [{"from": "a", "to": "b", "label": "max 3 words"}], "explanation": "2-4 plain sentences", "analogy": "1-2 sentences, everyday analogy", "example": "a short business or numeric example"}
+Use 4-8 nodes showing the concept's structure or process flow. Use only ids you define. Base it on the slide; do not invent data.`;
+async function aiVisual(deck, s) {
+  const ctx = deckContext([deck.slides[s.n - 2], s, deck.slides[s.n]].filter(Boolean), 3000);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const txt = await llmText(VISUAL_SYSTEM, `Explain slide ${s.n} ("${s.title}"). Neighbouring slides are given for context.\n\n${ctx}`, {json: true});
+    try {
+      const o = parseJSONLoose(txt), nodes = (o.nodes || []).filter(x => x && x.id && x.label).slice(0, 10).map(x => ({id: String(x.id), label: shortText(x.label, 48)}));
+      const ids = new Set(nodes.map(x => x.id)), edges = (o.edges || []).filter(e => e && ids.has(String(e.from)) && ids.has(String(e.to)) && String(e.from) !== String(e.to)).slice(0, 14).map(e => ({from: String(e.from), to: String(e.to), label: shortText(e.label, 24)}));
+      if (nodes.length < 2) throw new Error('too few nodes');
+      return {title: shortText(o.title, 80) || s.title, nodes, edges, explanation: shortText(o.explanation, 700), analogy: shortText(o.analogy, 400), example: shortText(o.example, 500), source: activeLLM().label + ' · ' + activeLLM().model};
+    } catch (e) { if (attempt) throw new Error('The model did not return a usable diagram. Try again or use a larger model.'); }
+  }
+}
+function ruleVisual(s) {
+  const pts = s.paras.filter(p => !isCode(p)).slice(0, 6), nodes = [{id: 't', label: shortText(s.title, 48)}];
+  pts.forEach((p, i) => nodes.push({id: 'p' + i, label: shortText(p.replace(/[:;].*$/, ''), 48)}));
+  return {title: s.title, nodes, edges: pts.map((_, i) => ({from: 't', to: 'p' + i, label: ''})), explanation: '', analogy: '', example: '', source: 'Slide structure (offline)'};
+}
+function diagramSVG(dg) {
+  const nodes = dg.nodes, byId = Object.fromEntries(nodes.map(n => [n.id, n])), layer = Object.fromEntries(nodes.map(n => [n.id, 0]));
+  for (let it = 0; it < nodes.length; it++) dg.edges.forEach(e => { if (layer[e.to] < layer[e.from] + 1 && layer[e.from] + 1 < 6) layer[e.to] = layer[e.from] + 1; });
+  const cols = {}; nodes.forEach(n => (cols[layer[n.id]] = cols[layer[n.id]] || []).push(n));
+  const NW = 156, NH = 50, GX = 54, GY = 18, nc = Object.keys(cols).length, maxRows = Math.max(...Object.values(cols).map(c => c.length));
+  const W = Math.max(320, nc * NW + (nc - 1) * GX + 20), H = maxRows * NH + (maxRows - 1) * GY + 20, pos = {};
+  Object.entries(cols).forEach(([c, list]) => { const top = (H - (list.length * NH + (list.length - 1) * GY)) / 2; list.forEach((n, i) => { pos[n.id] = {x: 10 + +c * (NW + GX), y: top + i * (NH + GY)}; }); });
+  const wrap = t => { const w = t.split(/\s+/), lines = ['']; w.forEach(x => { if ((lines[lines.length - 1] + ' ' + x).trim().length > 22 && lines[lines.length - 1]) lines.push(x); else lines[lines.length - 1] = (lines[lines.length - 1] + ' ' + x).trim(); }); return lines.length > 2 ? [lines[0], shortText(lines.slice(1).join(' '), 20) + (lines.slice(1).join(' ').length > 20 ? '…' : '')] : lines; };
+  let g = `<defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--muted)"/></marker></defs>`;
+  dg.edges.forEach(e => { const a = pos[e.from], b = pos[e.to]; if (!a || !b) return;
+    const x1 = a.x + NW, y1 = a.y + NH / 2, x2 = b.x, y2 = b.y + NH / 2, same = layer[e.from] === layer[e.to];
+    const d = same ? `M${a.x + NW / 2},${a.y + NH} C${a.x + NW / 2},${a.y + NH + 30} ${b.x + NW / 2},${b.y - 30} ${b.x + NW / 2},${b.y}` : `M${x1},${y1} C${x1 + GX / 2},${y1} ${x2 - GX / 2},${y2} ${x2 - 2},${y2}`;
+    g += `<path d="${d}" fill="none" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#arr)"/>`;
+    if (e.label) g += `<text x="${(x1 + x2) / 2}" y="${(y1 + y2) / 2 - 4}" text-anchor="middle" style="font-size:10px">${esc(e.label)}</text>`; });
+  nodes.forEach((n, i) => { const p = pos[n.id], lines = wrap(n.label), first = layer[n.id] === 0;
+    g += `<rect x="${p.x}" y="${p.y}" width="${NW}" height="${NH}" rx="10" fill="${first ? 'var(--accent)' : 'var(--panel)'}" stroke="var(--accent)" stroke-width="1.5"/>` + lines.map((l, k) => `<text x="${p.x + NW / 2}" y="${p.y + NH / 2 + (k - (lines.length - 1) / 2) * 14 + 4}" text-anchor="middle" style="font-size:12px;font-weight:600;fill:${first ? 'var(--accent-ink)' : 'var(--ink)'}">${esc(l)}</text>`).join(''); });
+  return `<svg class="chart" viewBox="0 0 ${W} ${H}" style="max-width:${W}px" role="img" aria-label="${esc(dg.title)}">${g}</svg>`;
+}
+const QUIZ_SYSTEM = `You write exam-style multiple-choice questions for an MBA Operations Management / Operations Analytics course, based only on the lecture slides given. Reply with ONE JSON object only, no prose, no code fences:
+{"questions": [{"q": "question", "options": ["A", "B", "C", "D"], "answer": 0, "explanation": "why the answer is right, 1-2 sentences", "slide": 3}]}
+Rules: exactly 4 options, one correct; "answer" is the index (0-3) of the correct option; plausible distractors; mix concept, interpretation and small calculation questions; cite the slide number the question comes from.`;
+async function aiQuiz(deck, n, from, to) {
+  const slides = deck.slides.filter(s => s.n >= from && s.n <= to);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const txt = await llmText(QUIZ_SYSTEM, `Write exactly ${n} questions from these slides (${deck.name}, slides ${from}–${to}).\n\n${deckContext(slides, 7000)}`, {json: true});
+    try {
+      const o = parseJSONLoose(txt), qs = (Array.isArray(o) ? o : o.questions || []).filter(q => q && q.q && Array.isArray(q.options) && q.options.length >= 2).map(q => {
+        const opts = q.options.slice(0, 4).map(x => shortText(x, 200)), a = Number.isInteger(+q.answer) && +q.answer < opts.length ? +q.answer : opts.findIndex(x => String(q.answer).trim().toLowerCase() === x.toLowerCase());
+        return {q: shortText(q.q, 400), options: opts, answer: a, explanation: shortText(q.explanation, 500), slide: +q.slide || null};
+      }).filter(q => q.answer >= 0);
+      if (!qs.length) throw new Error('no usable questions');
+      return qs.slice(0, n);
+    } catch (e) { if (attempt) throw new Error('The model did not return a usable quiz. Try again, choose fewer questions, or use the offline quiz.'); }
+  }
+}
+const HELP_SYSTEM = `You are a patient tutor for an MBA Operations Management / Operations Analytics course. Answer the student's question using the lecture slides provided, citing them like [Slide 7]. Explain step by step in plain language, with a small example when it helps. If the slides do not cover the question, say so in one sentence, then give a brief general answer marked (general knowledge). Keep it under 220 words. Use Markdown bullets and **bold** sparingly.`;
+
+/* ---- Study Room: page ---- */
+const studyDeck = () => STUDY.decks.find(d => d.id === STUDY.active) || null;
+async function studyLoad(files) {
+  STUDY.busy = true; STUDY.msg = {text: `Reading ${files.length} file(s)…`}; renderMain();
+  const errs = [];
+  for (const f of files) {
+    try {
+      if (f.size > 80e6) throw new Error('file is larger than 80 MB');
+      let parsed;
+      if (/\.pptx$/i.test(f.name)) parsed = await parsePptx(f);
+      else if (/\.(txt|md)$/i.test(f.name)) { const txt = await f.text(); const blocks = txt.split(/\n(?=#{1,3}\s)|\n\s*\n\s*\n/).map(b => b.trim()).filter(Boolean); parsed = {slides: blocks.map((b, i) => { const ls = b.split('\n').map(x => x.replace(/^#+\s*|^[-*•]\s*/, '').trim()).filter(Boolean); return {n: i + 1, title: ls[0].slice(0, 160), paras: ls.slice(1), tables: [], images: [], notes: ''}; }), boiler: []}; }
+      else if (/\.ppt$/i.test(f.name)) throw new Error('old .ppt format: open it in PowerPoint and “Save as” .pptx');
+      else if (/\.pdf$/i.test(f.name)) throw new Error('PDF is not supported yet: please upload the .pptx version of the slides');
+      else throw new Error('unsupported file type (use .pptx, .txt or .md)');
+      if (!parsed.slides.length) throw new Error('no slide text found');
+      const deck = {id: 'd' + Date.now() + Math.random().toString(36).slice(2, 6), name: f.name.replace(/\.(pptx|txt|md)$/i, ''), ...parsed, aiNotes: null, quiz: null, help: [], visual: {}, bestQuiz: null};
+      deck.terms = keyTerms(deck.slides); deck.notesMd = ruleNotes(deck);
+      STUDY.decks.push(deck); STUDY.active = deck.id; STUDY.slide = 0; STUDY.tab = 'notes';
+      logActivity({short: 'Study'}, `Loaded ${deck.name}: ${deck.slides.length} slides`);
+    } catch (e) { errs.push(`${f.name}: ${e.message}`); }
+  }
+  STUDY.busy = false; STUDY.msg = errs.length ? {err: true, text: 'Could not read ' + errs.join('; ')} : null; render();
+}
+function studyHTML() {
+  const d = studyDeck(), live = llmLive(), m = STUDY.msg;
+  let html = `<section class="card"><div class="thead"><div class="t"><div class="small muted" style="font-weight:700">STUDY ROOM</div><h2>📚 Learn from your session slides</h2><p class="role">Upload a session's PowerPoint (.pptx). You get study notes, visual explanations, quiz practice and help grounded in the slides, plus links to the matching OpsLab simulations. The file is read in your browser. Slide text is sent only to the LLM you choose in the panel on the right (with Ollama it never leaves your computer). Without an LLM, everything still works in a simpler, slide-based way.</p></div></div>
+    <label class="dropzone" id="studyDrop"><input type="file" id="studyFile" accept=".pptx,.txt,.md" multiple hidden><b>⬆ Drop .pptx files here</b> or click to choose<span class="small muted">PowerPoint .pptx (also .txt / .md notes) · several files at once is fine</span></label>
+    ${m ? `<div class="msg ${m.err ? 'error' : 'tool'} ${STUDY.busy ? 'dots' : ''}" style="margin-top:8px">${esc(m.text)}</div>` : ''}
+    ${STUDY.decks.length ? `<div class="rchips" style="margin-top:10px">${STUDY.decks.map(x => `<span class="rchip ${x.id === STUDY.active ? 'now' : ''}" data-deck="${x.id}" style="cursor:pointer">${esc(x.name)} · ${x.slides.length} slides <b data-del="${x.id}" title="Remove" style="margin-left:4px">×</b></span>`).join('')}</div>` : ''}</section>`;
+  if (!d) return html + `<section class="card"><div class="empty">No session loaded yet. Upload a .pptx to start.</div></section>`;
+  const tabs = [['notes', '📝 Notes'], ['visual', '🖼 Visual explanation'], ['quiz', '❓ Quiz practice'], ['help', '💬 Ask for help']];
+  const links = opsLinks(d.slides.map(slideText).join('\n'));
+  html += `<section class="card"><div class="seg" style="margin-top:0">${tabs.map(([id, l]) => `<button data-tab="${id}" class="${STUDY.tab === id ? 'on' : ''}">${l}</button>`).join('')}</div>
+    ${links.length ? `<div class="small" style="margin-top:10px">🎮 Practise this session in OpsLab: ${links.map(x => `<button class="btn small" data-go="${x.id}">${esc(x.name)}</button>`).join(' ')}</div>` : ''}
+    <div id="studyTab" style="margin-top:12px">${studyTabHTML(d, live)}</div></section>`;
+  return html;
+}
+function studyTabHTML(d, live) {
+  const busyBtn = (id, label, title) => `<button class="btn ${live ? 'primary' : ''}" id="${id}" ${STUDY.busy || !live ? 'disabled' : ''} title="${live ? '' : 'Connect an LLM in the panel on the right'}">${STUDY.busy && STUDY.busyOn === id ? 'Working…' : label}</button>`;
+  if (STUDY.tab === 'notes') {
+    const showAI = d.aiNotes && d.showAI !== false;
+    return `<div class="actions">${busyBtn('studyAINotes', d.aiNotes ? '✦ Rewrite AI notes' : '✦ Write AI study notes')}${d.aiNotes ? `<button class="btn small" id="studyNotesToggle">${showAI ? 'Show slide-based notes' : 'Show AI notes'}</button>` : ''}<button class="btn small" id="studyNotesDl">⬇ Download notes (.md)</button></div>
+      <p class="small muted">${showAI ? `AI notes by ${esc(d.aiNotesBy)}. Check them against the slides.` : 'Slide-based notes (offline): grouped by section, with formulas, tables, code and a glossary of key terms. Connect an LLM for explained notes.'}</p>
+      <div class="notes">${mdBlock(showAI ? d.aiNotes : d.notesMd, d)}</div>`;
+  }
+  if (STUDY.tab === 'visual') {
+    const s = d.slides[Math.min(STUDY.slide, d.slides.length - 1)], v = d.visual[s.n] || ruleVisual(s), links = opsLinks(slideText(s), 1);
+    return `<div class="actions"><button class="btn small" id="studyPrev" ${s.n === 1 ? 'disabled' : ''}>◀ Prev</button><select id="studySlide" class="tsa-sel" style="max-width:420px">${d.slides.map(x => `<option value="${x.n - 1}" ${x.n === s.n ? 'selected' : ''}>${x.n}. ${esc(shortText(x.title, 70))}</option>`).join('')}</select><button class="btn small" id="studyNext" ${s.n === d.slides.length ? 'disabled' : ''}>Next ▶</button></div>
+      <div class="two" style="margin-top:10px"><div class="slide-card"><div class="small muted">Slide ${s.n} of ${d.slides.length}</div><h3 style="margin:2px 0 8px">${esc(s.title)}</h3>
+        ${s.images.length ? `<div class="slide-imgs">${s.images.map(u => `<img src="${u}" alt="Image from slide ${s.n}">`).join('')}</div>` : ''}
+        ${s.paras.length ? `<ul class="clean small">${s.paras.slice(0, 14).map(p => `<li class="${isCode(p) ? 'mono' : ''}">${esc(p)}</li>`).join('')}</ul>` : ''}
+        ${s.tables.map(t => `<div class="scroll-x"><table class="tbl ex">${t.slice(0, 12).map((r, i) => `<tr>${r.map(c => i ? `<td>${esc(c)}</td>` : `<th>${esc(c)}</th>`).join('')}</tr>`).join('')}</table></div>`).join('')}
+        ${s.notes ? `<p class="small"><i>Speaker notes:</i> ${esc(s.notes.slice(0, 600))}</p>` : ''}</div>
+      <div><div class="actions" style="margin-top:0">${busyBtn('studyVisual', d.visual[s.n] ? '✦ Explain again' : '✦ Explain this slide visually')}</div>
+        <div class="small muted" style="margin:4px 0">${esc(v.source)}</div>${diagramSVG(v)}
+        ${v.explanation ? `<p class="small"><b>In plain words:</b> ${esc(v.explanation)}</p>` : ''}${v.analogy ? `<p class="small"><b>Analogy:</b> ${esc(v.analogy)}</p>` : ''}${v.example ? `<p class="small"><b>Example:</b> ${esc(v.example)}</p>` : ''}
+        ${links.length ? `<p class="small">🎮 See it live: ${links.map(x => `<button class="btn small" data-go="${x.id}">${esc(x.name)}</button>`).join(' ')}</p>` : ''}</div></div>`;
+  }
+  if (STUDY.tab === 'quiz') {
+    const q = d.quiz;
+    const setup = `<div class="actions"><label class="small">Questions <select id="quizN" class="tsa-sel">${[5, 10, 15].map(n => `<option>${n}</option>`).join('')}</select></label>
+      <label class="small">Slides <input type="number" id="quizFrom" class="tsa-sel" min="1" max="${d.slides.length}" value="1" style="width:64px"> to <input type="number" id="quizTo" class="tsa-sel" min="1" max="${d.slides.length}" value="${d.slides.length}" style="width:64px"></label>
+      ${busyBtn('studyAIQuiz', '✦ AI quiz')}<button class="btn" id="studyRuleQuiz">📝 Quick quiz from slides (offline)</button></div>`;
+    if (!q) return setup + '<div class="empty">Choose the range and generate a quiz. AI quizzes mix concept, interpretation and calculation questions. The offline quiz asks you to fill in key terms from the slides.</div>';
+    const checked = q.checked, score = checked ? q.items.filter((x, i) => q.picks[i] === x.answer).length : 0;
+    return setup + `<p class="small muted">${esc(q.source)} · ${q.items.length} questions${d.bestQuiz !== null ? ` · your best: ${d.bestQuiz}%` : ''}</p>
+      ${checked ? `<div class="callout"><b>Score: ${score}/${q.items.length} (${Math.round(score / q.items.length * 100)}%).</b> ${score === q.items.length ? 'Excellent!' : 'Review the explanations below, then retry.'}</div>` : ''}
+      <ol class="quiz">${q.items.map((x, i) => `<li><p><b>${esc(x.q)}</b>${x.slide ? ` <span class="chg">Slide ${x.slide}</span>` : ''}</p>${x.options.map((o, j) => `<label class="tsa-opt ${checked ? (j === x.answer ? 'right' : q.picks[i] === j ? 'wrong' : '') : ''}"><input type="radio" name="q${i}" value="${j}" ${q.picks[i] === j ? 'checked' : ''} ${checked ? 'disabled' : ''}><span>${esc(o)}</span></label>`).join('')}${checked ? `<p class="small ${q.picks[i] === x.answer ? 'up' : 'down'}">${q.picks[i] === x.answer ? '✓ Correct.' : '✗ Not quite.'} ${esc(x.explanation || '')}</p>` : ''}</li>`).join('')}</ol>
+      <div class="actions">${checked ? `<button class="btn primary" id="quizRetry">↺ Retry the ones I missed</button>` : `<button class="btn primary" id="quizCheck">Check answers</button>`}</div>`;
+  }
+  const hist = d.help;
+  return `<div class="chat-in"><textarea id="studyQ" rows="2" placeholder="Ask about this session, e.g. “Why do we difference a series before ARIMA?”" ${STUDY.busy ? 'disabled' : ''}>${esc(STUDY.qDraft)}</textarea><button class="btn primary" id="studyAsk" ${STUDY.busy ? 'disabled' : ''}>${STUDY.busy ? 'Thinking…' : 'Ask'}</button></div>
+    <p class="small muted">${live ? `Answers come from ${esc(activeLLM().label)}, grounded in the most relevant slides and citing them.` : 'Offline: you get the most relevant slides and sentences. Connect an LLM for explained answers.'}</p>
+    ${hist.slice().reverse().map(h => `<div class="msg user" style="max-width:100%;margin-top:10px">${esc(h.q)}</div><div class="msg assistant" style="max-width:100%;margin-top:6px"><span class="who">${h.ai ? 'Study assistant' : 'Relevant slides'}</span>${h.html}</div>`).join('')}`;
+}
+function bindStudy() {
+  const d = studyDeck(), on = (id, fn) => { const el = $('#' + id); if (el) el.onclick = fn; };
+  const fileIn = $('#studyFile'), drop = $('#studyDrop');
+  fileIn.onchange = () => { if (fileIn.files.length) studyLoad([...fileIn.files]); };
+  drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('over'); });
+  drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+  drop.addEventListener('drop', e => { e.preventDefault(); drop.classList.remove('over'); if (e.dataTransfer.files.length) studyLoad([...e.dataTransfer.files]); });
+  $$('[data-deck]').forEach(c => c.onclick = e => { if (e.target.dataset.del) { const k = STUDY.decks.findIndex(x => x.id === e.target.dataset.del); STUDY.decks[k].slides.forEach(s => s.images.forEach(u => URL.revokeObjectURL(u))); STUDY.decks.splice(k, 1); if (STUDY.active === e.target.dataset.del) STUDY.active = STUDY.decks.length ? STUDY.decks[0].id : null; } else { STUDY.active = c.dataset.deck; STUDY.slide = 0; } render(); });
+  $$('[data-go]').forEach(b => b.onclick = () => { state.view = b.dataset.go; render(); window.scrollTo({top: 0}); });
+  if (!d) return;
+  $$('[data-tab]').forEach(b => b.onclick = () => { STUDY.tab = b.dataset.tab; renderMain(); });
+  const run = async (id, fn) => { STUDY.busy = true; STUDY.busyOn = id; STUDY.msg = null; renderMain(); try { await fn(); } catch (e) { STUDY.msg = {err: true, text: e.message}; } STUDY.busy = false; STUDY.busyOn = null; if (state.view === 'study') render(); };
+  on('studyAINotes', () => run('studyAINotes', async () => { d.aiNotes = await aiNotes(d, t => { STUDY.msg = {text: t}; renderMain(); }); d.aiNotesBy = activeLLM().label + ' · ' + activeLLM().model; d.showAI = true; STUDY.msg = null; logActivity({short: 'Study'}, 'AI notes written for ' + d.name); }));
+  on('studyNotesToggle', () => { d.showAI = d.showAI === false; renderMain(); });
+  on('studyNotesDl', () => { const md = `# ${d.name}\n\n` + ((d.aiNotes && d.showAI !== false) ? d.aiNotes : d.notesMd.replace(/^\[\[table:(\d+):(\d+)\]\]$/gm, (m, a, b) => ((d.slides[a - 1] || {tables: []}).tables[b] || []).map(r => '| ' + r.join(' | ') + ' |').join('\n'))); const url = URL.createObjectURL(new Blob([md], {type: 'text/markdown'})), a = document.createElement('a'); a.href = url; a.download = d.name + '-notes.md'; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 2000); });
+  on('studyPrev', () => { STUDY.slide = Math.max(0, STUDY.slide - 1); renderMain(); });
+  on('studyNext', () => { STUDY.slide = Math.min(d.slides.length - 1, STUDY.slide + 1); renderMain(); });
+  const sel = $('#studySlide'); if (sel) sel.onchange = () => { STUDY.slide = +sel.value; renderMain(); };
+  on('studyVisual', () => run('studyVisual', async () => { const s = d.slides[STUDY.slide]; d.visual[s.n] = await aiVisual(d, s); }));
+  const range = () => { const n = +$('#quizN').value; let a = clamp(Math.round(+$('#quizFrom').value) || 1, 1, d.slides.length), b = clamp(Math.round(+$('#quizTo').value) || d.slides.length, 1, d.slides.length); if (b < a) [a, b] = [b, a]; return [n, a, b]; };
+  on('studyAIQuiz', () => run('studyAIQuiz', async () => { const [n, a, b] = range(); const items = await aiQuiz(d, n, a, b); d.quiz = {items, picks: [], checked: false, source: `AI quiz by ${activeLLM().label} · ${activeLLM().model}`}; }));
+  on('studyRuleQuiz', () => { const [n, a, b] = range(); const items = ruleQuiz(d, n, a, b); if (!items.length) { STUDY.msg = {err: true, text: 'Not enough text in these slides for an offline quiz. Widen the slide range or use the AI quiz.'}; return render(); } d.quiz = {items, picks: [], checked: false, source: 'Offline quiz: fill in the key term'}; STUDY.msg = null; renderMain(); });
+  $$('.quiz input[type=radio]').forEach(r => r.onchange = () => { d.quiz.picks[+r.name.slice(1)] = +r.value; });
+  on('quizCheck', () => { const q = d.quiz; q.checked = true; const pct = Math.round(q.items.filter((x, i) => q.picks[i] === x.answer).length / q.items.length * 100); d.bestQuiz = Math.max(d.bestQuiz || 0, pct); logActivity({short: 'Study'}, `Quiz on ${d.name}: ${pct}%`); renderMain(); });
+  on('quizRetry', () => { const q = d.quiz, wrong = q.items.filter((x, i) => q.picks[i] !== x.answer); d.quiz = {items: wrong.length ? wrong : q.items, picks: [], checked: false, source: q.source + ' · retry'}; renderMain(); });
+  const qa = $('#studyQ'); if (qa) { qa.addEventListener('input', () => { STUDY.qDraft = qa.value; }); qa.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('#studyAsk').click(); } }); }
+  on('studyAsk', () => { const q = (STUDY.qDraft || '').trim(); if (!q) return; STUDY.qDraft = ''; run('studyAsk', async () => {
+    const top = relevantSlides(d, q, 4);
+    if (llmLive()) { const md = await llmText(HELP_SYSTEM, `QUESTION: ${q}\n\nMOST RELEVANT SLIDES from "${d.name}":\n${deckContext(top.map(x => x.s), 5000) || '(no matching slides)'}`); d.help.push({q, ai: true, html: mdBlock(md, d)}); }
+    else d.help.push({q, ai: false, html: top.length ? top.map(x => { const qs = new Set(words(q)); const best = [...x.s.paras, x.s.notes].filter(Boolean).sort((a, b) => words(b).filter(w => qs.has(w)).length - words(a).filter(w => qs.has(w)).length).slice(0, 2); return `<p><span class="chg">Slide ${x.s.n}</span> <b>${esc(x.s.title)}</b></p>${best.length ? `<ul>${best.map(b => `<li>${esc(b)}</li>`).join('')}</ul>` : ''}`; }).join('') : '<p>No slide matches these words. Try different keywords, or connect an LLM for a general explanation.</p>'});
+    logActivity({short: 'Study'}, 'Question asked about ' + d.name); }); });
+}
+function renderStudySide() {
+  const live = llmLive(), a = activeLLM(), d = studyDeck();
+  $('#side').innerHTML = `<div class="card" id="chatCard"><div class="ai-head"><div class="ai-badge">AI</div><div><h3>Study assistant</h3><p><span class="status-dot" style="background:${live ? 'var(--good)' : 'var(--faint)'}"></span>${live ? `${esc(a.label)} · ${esc(a.model)}` : 'Offline: slide-based features only'}</p></div></div>
+    ${d ? `<div class="ai-section"><h4>${esc(d.name)}</h4><div class="small">${d.slides.length} slides · ${d.slides.reduce((n, s) => n + s.images.length, 0)} images · ${d.terms.length} key terms${d.bestQuiz !== null ? ` · best quiz ${d.bestQuiz}%` : ''}</div>${d.terms.length ? `<div style="margin-top:6px">${d.terms.slice(0, 10).map(t => `<span class="chg">${esc(t.term)}</span>`).join('')}</div>` : ''}</div>` : ''}
+    <div class="ai-section"><h4>Suggested routine</h4><ol class="small" style="padding-left:18px;margin:0"><li>Read the notes (download them for revision)</li><li>Step through the slides with visual explanations</li><li>Take a quiz and retry the ones you missed</li><li>Ask about anything unclear</li><li>Practise the concept in the linked simulation</li></ol></div>
+    <p class="small muted" style="margin:8px 0 0">${live ? 'Slide text is sent to this provider only when you press an AI button.' : 'Connect an LLM below for explained notes, diagrams, AI quizzes and answers. Ollama is free and keeps your slides on your computer.'}</p>
+    ${llmSettingsHTML()}</div>` + activityCard();
+  bindLLMSettings(null, () => { renderStudySide(); if (state.view === 'study') { renderMain(); bindStudy(); } });
 }
 
 /* ---------------- boot ---------------- */

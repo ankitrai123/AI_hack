@@ -3420,6 +3420,234 @@ function ruleQuiz(deck, n, from, to) {
   return qs;
 }
 
+/* ---- Study Room: readers for PDF, Word, Excel, CSV, HTML (no libraries) ---- */
+// Inflate that keeps whatever decoded before an error (some PDF streams are slightly truncated).
+async function inflateBytes(u8, format) {
+  const reader = new Blob([u8]).stream().pipeThrough(new DecompressionStream(format)).getReader(), parts = []; let n = 0;
+  try { for (;;) { const {done, value} = await reader.read(); if (done) break; parts.push(value); n += value.length; } } catch (e) { if (!n) throw e; }
+  const out = new Uint8Array(n); let o = 0; parts.forEach(p => { out.set(p, o); o += p.length; }); return out;
+}
+const latin1 = u8 => { let s = ''; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return s; };
+const toBytes = s => { const u = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i) & 255; return u; };
+// --- PDF object syntax ---
+const PDF_DELIM = '()<>[]{}/% \t\r\n\f\0';
+function pdfSkip(s, i) { for (;;) { while (i < s.length && ' \t\r\n\f\0'.includes(s[i])) i++; if (s[i] === '%') { while (i < s.length && s[i] !== '\n' && s[i] !== '\r') i++; } else return i; } }
+function pdfValue(s, i) {
+  i = pdfSkip(s, i); const c = s[i];
+  if (c === '<' && s[i + 1] === '<') { const d = {}; i += 2; for (;;) { i = pdfSkip(s, i); if (s[i] === '>' && s[i + 1] === '>') return {v: d, i: i + 2}; if (i >= s.length) return {v: d, i}; const k = pdfValue(s, i); if (typeof k.v !== 'string' || k.v[0] !== '/') { i = k.i + 1; continue; } const val = pdfValue(s, k.i); d[k.v.slice(1)] = val.v; i = val.i; } }
+  if (c === '<') { const e = s.indexOf('>', i); let h = s.slice(i + 1, e).replace(/\s/g, ''); if (h.length % 2) h += '0'; let o = ''; for (let k = 0; k < h.length; k += 2) o += String.fromCharCode(parseInt(h.substr(k, 2), 16)); return {v: {s: o}, i: e + 1}; }
+  if (c === '[') { const a = []; i++; for (;;) { i = pdfSkip(s, i); if (s[i] === ']' || i >= s.length) return {v: a, i: i + 1}; const x = pdfValue(s, i); a.push(x.v); i = x.i; } }
+  if (c === '(') { let depth = 1, o = ''; i++; while (i < s.length && depth) { const ch = s[i++]; if (ch === '\\') { const n = s[i++]; const map = {n: '\n', r: '\r', t: '\t', b: '\b', f: '\f', '(': '(', ')': ')', '\\': '\\'}; if (n in map) o += map[n]; else if (/[0-7]/.test(n)) { let oc = n; while (oc.length < 3 && /[0-7]/.test(s[i])) oc += s[i++]; o += String.fromCharCode(parseInt(oc, 8) & 255); } else if (n === '\r') { if (s[i] === '\n') i++; } else if (n !== '\n') o += n; } else if (ch === '(') { depth++; o += ch; } else if (ch === ')') { if (--depth) o += ch; } else o += ch; } return {v: {s: o}, i}; }
+  if (c === '/') { let j = i + 1; while (j < s.length && !PDF_DELIM.includes(s[j])) j++; return {v: '/' + s.slice(i + 1, j).replace(/#([0-9a-fA-F]{2})/g, (m, h) => String.fromCharCode(parseInt(h, 16))), i: j}; }
+  let j = i; while (j < s.length && !PDF_DELIM.includes(s[j])) j++;
+  const tok = s.slice(i, j);
+  if (/^[+-]?(\d+\.?\d*|\.\d+)$/.test(tok)) { const m = /^\s+(\d+)\s+R(?![A-Za-z])/.exec(s.slice(j, j + 24)); if (m && /^\d+$/.test(tok)) return {v: {r: +tok}, i: j + m[0].length}; return {v: +tok, i: j}; }
+  if (tok === 'true' || tok === 'false') return {v: tok === 'true', i: j};
+  return {v: null, i: Math.max(j, i + 1)};
+}
+async function pdfDecode(dict, data) {
+  let f = dict.Filter; f = f ? (Array.isArray(f) ? f : [f]) : [];
+  for (const name of f) {
+    if (name === '/FlateDecode' || name === '/Fl') { try { data = await inflateBytes(data, 'deflate'); } catch (e) { data = await inflateBytes(data.subarray(2), 'deflate-raw'); } }
+    else if (name === '/ASCIIHexDecode' || name === '/AHx') { const h = latin1(data).replace(/[^0-9a-fA-F]/g, ''); data = toBytes(h.match(/../g).map(x => String.fromCharCode(parseInt(x, 16))).join('')); }
+    else if (name === '/ASCII85Decode' || name === '/A85') { const t = latin1(data).replace(/\s/g, '').replace(/^<~/, '').replace(/~>.*$/, ''); let o = '', g = []; for (const ch of t) { if (ch === 'z' && !g.length) { o += '\0\0\0\0'; continue; } g.push(ch.charCodeAt(0) - 33); if (g.length === 5) { let v = g.reduce((a, b) => a * 85 + b, 0); o += String.fromCharCode(v >>> 24 & 255, v >>> 16 & 255, v >>> 8 & 255, v & 255); g = []; } } if (g.length) { const k = g.length; while (g.length < 5) g.push(84); let v = g.reduce((a, b) => a * 85 + b, 0); o += String.fromCharCode(v >>> 24 & 255, v >>> 16 & 255, v >>> 8 & 255, v & 255).slice(0, k - 1); } data = toBytes(o); }
+    else return {data, raw: name};
+  }
+  return {data};
+}
+const GLYPHS = {bullet: '•', quoteright: '’', quoteleft: '‘', quotedblleft: '“', quotedblright: '”', endash: '–', emdash: '—', fi: 'fi', fl: 'fl', ellipsis: '…', minus: '−', degree: '°', multiply: '×', divide: '÷', space: ' ', periodcentered: '·', trademark: '™', copyright: '©', registered: '®'};
+function parseCMap(text) {
+  const map = {}; let bytes = 2;
+  const cs = /begincodespacerange\s*<([0-9a-fA-F]+)>/.exec(text); if (cs) bytes = Math.max(1, cs[1].length / 2);
+  const hex2str = h => { let o = ''; for (let k = 0; k + 3 < h.length + 1; k += 4) o += String.fromCharCode(parseInt(h.substr(k, 4).padEnd(4, '0'), 16)); return o; };
+  for (const blk of text.matchAll(/beginbfchar([\s\S]*?)endbfchar/g)) for (const m of blk[1].matchAll(/<([0-9a-fA-F]+)>\s*<([0-9a-fA-F]*)>/g)) map[parseInt(m[1], 16)] = hex2str(m[2]);
+  for (const blk of text.matchAll(/beginbfrange([\s\S]*?)endbfrange/g)) for (const m of blk[1].matchAll(/<([0-9a-fA-F]+)>\s*<([0-9a-fA-F]+)>\s*(<([0-9a-fA-F]*)>|\[([^\]]*)\])/g)) {
+    const lo = parseInt(m[1], 16), hi = parseInt(m[2], 16);
+    if (m[4] !== undefined) { const base = parseInt(m[4].slice(-4) || '0', 16), pre = m[4].length > 4 ? hex2str(m[4].slice(0, -4)) : ''; for (let c = lo; c <= hi && c - lo < 65536; c++) map[c] = pre + String.fromCharCode(base + c - lo); }
+    else [...m[5].matchAll(/<([0-9a-fA-F]*)>/g)].forEach((x, k) => { map[lo + k] = hex2str(x[1]); });
+  }
+  return {map, bytes};
+}
+async function parsePdf(file) {
+  const u8 = new Uint8Array(await file.arrayBuffer()), src = latin1(u8);
+  if (!src.startsWith('%PDF')) throw new Error('this does not look like a PDF file');
+  const objs = {};
+  for (const m of src.matchAll(/(\d+)\s+(\d+)\s+obj\b/g)) {
+    const at = m.index + m[0].length, val = pdfValue(src, at); let j = pdfSkip(src, val.i), stream = null;
+    if (src.startsWith('stream', j)) {
+      let st = j + 6; if (src[st] === '\r') st++; if (src[st] === '\n') st++;
+      let end = typeof val.v.Length === 'number' && src.startsWith('endstream', pdfSkip(src, st + val.v.Length)) ? st + val.v.Length : src.indexOf('endstream', st);
+      if (end < 0) end = src.length; let e2 = end; if (typeof val.v.Length !== 'number') { if (src[e2 - 1] === '\n') e2--; if (src[e2 - 1] === '\r') e2--; }
+      stream = u8.subarray(st, e2);
+    }
+    objs[+m[1]] = {v: val.v, stream};
+  }
+  if (/\/Encrypt\s/.test(src.slice(-4096)) || Object.values(objs).some(o => o.v && o.v.Type === '/XRef' && o.v.Encrypt)) throw new Error('this PDF is password-protected or encrypted. Save an unprotected copy and try again');
+  for (const [num, o] of Object.entries(objs)) if (o.v && o.v.Type === '/ObjStm' && o.stream) {
+    try { const d = latin1((await pdfDecode(o.v, o.stream)).data), first = o.v.First, hdr = d.slice(0, first).trim().split(/\s+/).map(Number);
+      for (let k = 0; k < hdr.length; k += 2) { const n = hdr[k]; if (!(n in objs) || objs[n].fromStm) objs[n] = {v: pdfValue(d, first + hdr[k + 1]).v, stream: null, fromStm: true}; } } catch (e) {}
+  }
+  const get = x => { let k = 0; while (x && typeof x === 'object' && 'r' in x && k++ < 20) x = objs[x.r] ? objs[x.r].v : null; return x; };
+  const streamOf = async x => { const o = x && x.r !== undefined ? objs[x.r] : null; if (!o || !o.stream) return null; return pdfDecode(o.v, o.stream); };
+  // pages in document order (with inherited resources)
+  const pages = [], catalog = Object.values(objs).map(o => o.v).reverse().find(v => v && v.Type === '/Catalog');
+  const walk = (node, res, depth) => { node = get(node); if (!node || depth > 30) return; const r = node.Resources ? get(node.Resources) : res; if (node.Type === '/Pages' || node.Kids) (get(node.Kids) || []).forEach(k => walk(k, r, depth + 1)); else pages.push({page: node, res: r}); };
+  if (catalog) walk(catalog.Pages, null, 0);
+  if (!pages.length) Object.keys(objs).map(Number).sort((a, b) => a - b).forEach(n => { const v = objs[n].v; if (v && v.Type === '/Page') pages.push({page: v, res: get(v.Resources)}); });
+  if (!pages.length) throw new Error('no pages found in this PDF');
+  const fontCache = new Map();
+  const fontInfo = async ref => {
+    const key = ref && ref.r !== undefined ? ref.r : JSON.stringify(ref); if (fontCache.has(key)) return fontCache.get(key);
+    const f = get(ref) || {}, info = {cmap: null, bytes: (f.Subtype === '/Type0') ? 2 : 1, diff: {}};
+    if (f.ToUnicode) { try { const d = await streamOf(f.ToUnicode); if (d) { const c = parseCMap(latin1(d.data)); info.cmap = c.map; info.bytes = c.bytes; } } catch (e) {} }
+    const enc = get(f.Encoding); if (enc && enc.Differences) { let code = 0; enc.Differences.forEach(x => { if (typeof x === 'number') code = x; else if (typeof x === 'string') { const g = x.slice(1); info.diff[code++] = GLYPHS[g] || (g.length === 1 ? g : /^uni[0-9A-F]{4}$/.test(g) ? String.fromCharCode(parseInt(g.slice(3), 16)) : ''); } }); }
+    fontCache.set(key, info); return info;
+  };
+  const decodeStr = (str, fi) => { let o = ''; if (fi.cmap) { for (let k = 0; k + fi.bytes <= str.length; k += fi.bytes) { let code = 0; for (let b = 0; b < fi.bytes; b++) code = code * 256 + str.charCodeAt(k + b); o += fi.cmap[code] !== undefined ? fi.cmap[code] : ''; } return o; } if (fi.bytes === 2) return ''; for (const ch of str) { const c = ch.charCodeAt(0); o += fi.diff[c] !== undefined ? fi.diff[c] : c === 0x95 ? '•' : c === 0x92 ? '’' : c === 0x93 ? '“' : c === 0x94 ? '”' : c === 0x96 ? '–' : c === 0x97 ? '—' : ch; } return o; };
+  const mul = (a, b) => [a[0] * b[0] + a[1] * b[2], a[0] * b[1] + a[1] * b[3], a[2] * b[0] + a[3] * b[2], a[2] * b[1] + a[3] * b[3], a[4] * b[0] + a[5] * b[2] + b[4], a[4] * b[1] + a[5] * b[3] + b[5]];
+  const slides = [];
+  for (let pi = 0; pi < pages.length && pi < 500; pi++) {
+    const {page, res} = pages[pi], chunks = [], images = [];
+    const runContent = async (text, resources, ctm0, depth) => {
+      const fonts = (resources && get(resources.Font)) || {}, xo = (resources && get(resources.XObject)) || {};
+      let ctm = ctm0.slice(), stack = [], ops = [], tm = [1, 0, 0, 1, 0, 0], tlm = tm.slice(), font = null, size = 12, lead = 0, last = null, i = 0;
+      const show = str => { if (!font) return; const t = decodeStr(str, font); if (!t) return; const m = mul(tm, ctm), sz = size * Math.sqrt(Math.abs(m[0] * m[3] - m[1] * m[2])) || size; chunks.push({x: m[4], y: m[5], size: sz, text: t, join: last === 'show'}); tm = [tm[0], tm[1], tm[2], tm[3], tm[4] + t.length * size * 0.5 * tm[0], tm[5]]; last = 'show'; };
+      const s = text;
+      while (i < s.length) {
+        i = pdfSkip(s, i); if (i >= s.length) break; const c = s[i];
+        if (c === '/' || c === '(' || c === '<' || c === '[' || /[-+.\d]/.test(c)) { if (c === '<' && s[i + 1] === '<') { const v = pdfValue(s, i); ops.push(v.v); i = v.i; continue; } const v = pdfValue(s, i); ops.push(v.v && v.v.r !== undefined ? +s.slice(i).match(/^\d+/)[0] : v.v); i = v.i === i ? i + 1 : v.i; if (v.v && v.v.r !== undefined) { /* not a ref inside content */ i = i; } continue; }
+        let j = i; while (j < s.length && !PDF_DELIM.includes(s[j])) j++; const op = s.slice(i, j) || s[i]; i = Math.max(j, i + 1);
+        switch (op) {
+          case 'q': stack.push(ctm.slice()); break; case 'Q': ctm = stack.pop() || ctm; break;
+          case 'cm': if (ops.length >= 6) ctm = mul(ops.slice(-6), ctm); break;
+          case 'BT': tm = [1, 0, 0, 1, 0, 0]; tlm = tm.slice(); last = null; break;
+          case 'Tf': { const fr = fonts[String(ops[ops.length - 2] || '').slice(1)]; font = fr ? await fontInfo(fr) : null; size = +ops[ops.length - 1] || size; break; }
+          case 'TL': lead = +ops[ops.length - 1] || 0; break;
+          case 'Td': case 'TD': { const tx = +ops[ops.length - 2] || 0, ty = +ops[ops.length - 1] || 0; if (op === 'TD') lead = -ty; tlm = mul([1, 0, 0, 1, tx, ty], tlm); tm = tlm.slice(); last = 'move'; break; }
+          case 'Tm': if (ops.length >= 6) { tlm = ops.slice(-6).map(Number); tm = tlm.slice(); last = 'move'; } break;
+          case 'T*': tlm = mul([1, 0, 0, 1, 0, -lead], tlm); tm = tlm.slice(); last = 'move'; break;
+          case 'Tj': { const a = ops[ops.length - 1]; if (a && a.s !== undefined) show(a.s); break; }
+          case "'": case '"': { tlm = mul([1, 0, 0, 1, 0, -lead], tlm); tm = tlm.slice(); last = 'move'; const a = ops[ops.length - 1]; if (a && a.s !== undefined) show(a.s); break; }
+          case 'TJ': { const arr = ops[ops.length - 1]; if (Array.isArray(arr)) { let buf = ''; arr.forEach(x => { if (x && x.s !== undefined) buf += x.s; else if (typeof x === 'number' && x < -180 && font) { show(buf); buf = ''; if (chunks.length) chunks[chunks.length - 1].text += ' '; } }); show(buf); } break; }
+          case 'Do': { const nm = String(ops[ops.length - 1] || '').slice(1), ref = xo[nm], x = get(ref); if (!x) break;
+            if (x.Subtype === '/Form' && depth < 3) { const d = await streamOf(ref); if (d) await runContent(latin1(d.data), x.Resources ? get(x.Resources) : resources, x.Matrix ? mul(x.Matrix, ctm) : ctm, depth + 1); }
+            else if (x.Subtype === '/Image' && images.length < 4) { const o = objs[ref.r], filt = [].concat(x.Filter || []); if (o && o.stream && o.stream.length > 3000 && filt.length === 1 && (filt[0] === '/DCTDecode' || filt[0] === '/JPXDecode') && filt[0] === '/DCTDecode') images.push(URL.createObjectURL(new Blob([o.stream], {type: 'image/jpeg'}))); }
+            break; }
+          case 'BI': { const e = s.indexOf('EI', i); i = e < 0 ? s.length : e + 2; break; }
+        }
+        ops = [];
+      }
+    };
+    const contents = [].concat(get(page.Contents) || []).map(x => (x && x.r !== undefined ? x : null)).filter(Boolean);
+    const cRef = page.Contents && page.Contents.r !== undefined && !Array.isArray(get(page.Contents)) ? [page.Contents] : contents;
+    let text = ''; for (const r of cRef) { const d = await streamOf(r); if (d && !d.raw) text += latin1(d.data) + '\n'; }
+    await runContent(text, res, [1, 0, 0, 1, 0, 0], 0);
+    // lines: group chunks by baseline (top to bottom), then left to right
+    const lines = [];
+    chunks.filter(c => c.text.trim() || c.join).forEach(c => {
+      const ln = c.join && lines.length && lines[lines.length - 1].items.length ? lines[lines.length - 1] : lines.find(l => Math.abs(l.y - c.y) < Math.max(2, Math.min(l.size, c.size) * 0.5));
+      if (ln) { ln.items.push(c); ln.size = Math.max(ln.size, c.size); } else lines.push({y: c.y, size: c.size, items: [c]});
+    });
+    lines.sort((a, b) => b.y - a.y);
+    const textLines = lines.map(l => { const it = l.items.slice().sort((a, b) => (a.join || b.join) ? 0 : a.x - b.x); let o = ''; it.forEach((c, k) => { if (k && !c.join && !/\s$/.test(o) && !/^\s/.test(c.text)) o += ' '; o += c.text; }); return {t: o.replace(/\s+/g, ' ').trim(), size: l.size}; }).filter(l => l.t && !/^\d{1,3}$/.test(l.t));
+    // merge wrapped lines into paragraphs
+    const paras = [];
+    textLines.forEach(l => { const p = paras[paras.length - 1]; if (p && !/[.:;!?]$/.test(p.t) && /^[a-z(]/.test(l.t) && Math.abs(p.size - l.size) < 1) p.t += ' ' + l.t; else paras.push({...l}); });
+    if (!paras.length && !images.length) continue;
+    const sizes = paras.map(p => p.size).sort((a, b) => a - b), med = sizes[Math.floor(sizes.length / 2)] || 0, top = paras.slice(0, 3).reduce((a, b) => (b.size > a.size ? b : a), paras[0] || {size: 0});
+    let title = '';
+    if (paras.length && top.size > med * 1.15) { title = top.t; paras.splice(paras.indexOf(top), 1); } else if (paras.length) title = paras.shift().t;
+    slides.push({n: slides.length + 1, title: (title || `Page ${pi + 1}`).slice(0, 160), paras: paras.map(p => p.t), tables: [], images, notes: '', page: pi + 1});
+  }
+  const chars = slides.reduce((a, s) => a + s.title.length + s.paras.join('').length, 0);
+  if (chars < 30 * Math.max(1, Math.min(pages.length, 5))) throw new Error('no readable text found. It may be a scanned PDF (images only); OCR is not supported, so upload the original .pptx/.docx instead');
+  return finishDeck(slides, 'page');
+}
+function finishDeck(slides, unit) {
+  const cnt = {}; slides.forEach(s => new Set([s.title, ...s.paras]).forEach(p => { cnt[p] = (cnt[p] || 0) + 1; }));
+  const boiler = Object.keys(cnt).filter(p => cnt[p] >= 3 && cnt[p] >= slides.length * 0.3 && !slides.every(s => s.title === p));
+  slides.forEach(s => { s.paras = s.paras.filter(p => !boiler.includes(p)); if (boiler.includes(s.title)) s.title = s.paras.shift() || `${(unit || 'slide').replace(/^./, c => c.toUpperCase())} ${s.n}`; });
+  return {slides, boiler, unit: unit || 'slide'};
+}
+// --- Word (.docx): split into sections at headings (or every ~10 paragraphs) ---
+async function parseDocx(file) {
+  const z = await openZip(await file.arrayBuffer()), u = await z.read('word/document.xml'); if (!u) throw new Error('no document body found in this .docx');
+  const doc = xmlDoc(u), relsU = await z.read('word/_rels/document.xml.rels');
+  const rels = relsU ? Object.fromEntries(tagText(xmlDoc(relsU), 'Relationship').map(r => [r.getAttribute('Id'), resolvePath('word', r.getAttribute('Target'))])) : {};
+  const mimes = {png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', svg: 'image/svg+xml', webp: 'image/webp', bmp: 'image/bmp'};
+  const body = doc.getElementsByTagName('w:body')[0]; if (!body) throw new Error('no document body found in this .docx');
+  const secs = []; let cur = null;
+  const newSec = title => { cur = {n: secs.length + 1, title, paras: [], tables: [], images: [], notes: ''}; secs.push(cur); };
+  const runText = el => { let o = ''; const walk = n => { for (const c of n.childNodes) { if (c.nodeName === 'w:t') o += c.textContent; else if (c.nodeName === 'w:tab') o += ' '; else if (c.nodeName === 'w:br' || c.nodeName === 'w:cr') o += '\n'; else if (c.nodeName !== 'w:pPr' && c.nodeName !== 'w:rPr' && c.childNodes.length) walk(c); } }; walk(el); return o.replace(/[​-‍﻿]/g, '').replace(/[ \t]+/g, ' ').trim(); };
+  for (const el of body.children) {
+    if (el.nodeName === 'w:p') {
+      const st = el.getElementsByTagName('w:pStyle')[0], style = st ? st.getAttribute('w:val') || '' : '', text = runText(el), list = el.getElementsByTagName('w:numPr').length > 0;
+      const heading = /^(Title|Heading[12]|Heading 1|Heading 2|berschrift[12])$/i.test(style) || /^heading ?[12]$/i.test(style);
+      if (heading && text) { newSec(text.slice(0, 160)); }
+      else if (text) { if (!cur || (cur.paras.length >= 12 && !/^heading/i.test(style))) newSec(cur ? `${cur.title.replace(/ \(cont\.\)$/, '')} (cont.)` : text.length < 120 ? (text) : 'Introduction'); if (!(cur.paras.length === 0 && cur.title === text)) cur.paras.push((list ? '' : '') + text); }
+      for (const b of el.getElementsByTagName('a:blip')) { const t = rels[b.getAttribute('r:embed')]; const mime = t && mimes[t.split('.').pop().toLowerCase()]; if (mime && cur && cur.images.length < 4) { const d = await z.read(t); if (d && d.length < 5e6) cur.images.push(URL.createObjectURL(new Blob([d], {type: mime}))); } }
+    } else if (el.nodeName === 'w:tbl') {
+      if (!cur) newSec('Table');
+      cur.tables.push(tagText(el, 'w:tr').map(tr => tagText(tr, 'w:tc').map(tc => runText(tc))));
+    }
+  }
+  if (!secs.length) throw new Error('no text found in this document');
+  return finishDeck(secs, 'section');
+}
+// --- Excel (.xlsx): one section per sheet, shown as a table ---
+async function parseXlsx(file) {
+  const z = await openZip(await file.arrayBuffer()), ss = await z.read('xl/sharedStrings.xml');
+  const shared = ss ? tagText(xmlDoc(ss), 'si').map(si => tagText(si, 't').map(t => t.textContent).join('')) : [];
+  const wb = await z.read('xl/workbook.xml'), wbr = await z.read('xl/_rels/workbook.xml.rels');
+  const rmap = wbr ? Object.fromEntries(tagText(xmlDoc(wbr), 'Relationship').map(r => [r.getAttribute('Id'), resolvePath('xl', r.getAttribute('Target'))])) : {};
+  const sheets = wb ? tagText(xmlDoc(wb), 'sheet').map(s => ({name: s.getAttribute('name'), path: rmap[s.getAttribute('r:id')]})) : z.names.filter(n => /^xl\/worksheets\/sheet\d+\.xml$/.test(n)).map((p, i) => ({name: 'Sheet' + (i + 1), path: p}));
+  const out = [];
+  for (const sh of sheets.slice(0, 30)) {
+    const u = sh.path && await z.read(sh.path); if (!u) continue;
+    const rows = tagText(xmlDoc(u), 'row').slice(0, 60).map(r => { const cells = []; tagText(r, 'c').forEach(c => { const ref = c.getAttribute('r') || '', col = ref.replace(/\d+/g, '').split('').reduce((a, ch) => a * 26 + ch.charCodeAt(0) - 64, 0) - 1, v = (c.getElementsByTagName('v')[0] || {}).textContent, t = c.getAttribute('t'); cells[col >= 0 ? col : cells.length] = t === 's' ? shared[+v] : t === 'inlineStr' ? tagText(c, 't').map(x => x.textContent).join('') : v === undefined ? '' : (isFinite(+v) ? String(Math.round(+v * 1e6) / 1e6) : v); }); return Array.from({length: Math.min(cells.length, 15)}, (_, k) => cells[k] || ''); }).filter(r => r.some(x => x !== ''));
+    if (rows.length) out.push({n: out.length + 1, title: sh.name, paras: [], tables: [rows], images: [], notes: ''});
+  }
+  if (!out.length) throw new Error('no data found in this workbook');
+  return finishDeck(out, 'sheet');
+}
+function parseCsvText(txt, name) {
+  const rows = []; let row = [], f = '', q = false;
+  for (let i = 0; i < txt.length; i++) { const c = txt[i]; if (q) { if (c === '"' && txt[i + 1] === '"') { f += '"'; i++; } else if (c === '"') q = false; else f += c; } else if (c === '"') q = true; else if (c === ',' || c === ';' || c === '\t') { row.push(f.trim()); f = ''; } else if (c === '\n' || c === '\r') { if (c === '\r' && txt[i + 1] === '\n') i++; row.push(f.trim()); f = ''; if (row.some(x => x)) rows.push(row); row = []; } else f += c; }
+  row.push(f.trim()); if (row.some(x => x)) rows.push(row);
+  if (!rows.length) throw new Error('the file is empty');
+  return finishDeck([{n: 1, title: name, paras: [`${rows.length - 1} data rows, ${rows[0].length} columns: ${rows[0].join(', ')}`], tables: [rows.slice(0, 60).map(r => r.slice(0, 15))], images: [], notes: ''}], 'sheet');
+}
+function parseHtmlText(html) {
+  const d = new DOMParser().parseFromString(html, 'text/html'); d.querySelectorAll('script,style,nav,footer').forEach(x => x.remove());
+  const secs = []; let cur = null;
+  d.body.querySelectorAll('h1,h2,h3,p,li,td,th,pre,blockquote').forEach(el => {
+    const t = el.textContent.replace(/\s+/g, ' ').trim(); if (!t || el.closest('li') && el.tagName !== 'LI' && el.tagName !== 'PRE') return;
+    if (/^H[123]$/.test(el.tagName)) { cur = {n: secs.length + 1, title: t.slice(0, 160), paras: [], tables: [], images: [], notes: ''}; secs.push(cur); }
+    else { if (!cur || cur.paras.length >= 14) { cur = {n: secs.length + 1, title: cur ? cur.title + ' (cont.)' : (d.title || 'Page'), paras: [], tables: [], images: [], notes: ''}; secs.push(cur); } cur.paras.push(t); }
+  });
+  if (!secs.length) throw new Error('no readable text found');
+  return finishDeck(secs, 'section');
+}
+function parsePlainText(txt) {
+  const blocks = txt.split(/\n(?=#{1,3}\s)|\n\s*\n\s*\n/).map(b => b.trim()).filter(Boolean);
+  if (!blocks.length) throw new Error('the file is empty');
+  return finishDeck(blocks.map((b, i) => { const ls = b.split('\n').map(x => x.replace(/^#+\s*|^[-*•]\s*/, '').trim()).filter(Boolean); return {n: i + 1, title: ls[0].slice(0, 160), paras: ls.slice(1), tables: [], images: [], notes: ''}; }), 'section');
+}
+async function readStudyFile(f) {
+  const ext = (f.name.split('.').pop() || '').toLowerCase();
+  if (f.size > 80e6) throw new Error('file is larger than 80 MB');
+  if (ext === 'pptx' || ext === 'ppsx' || ext === 'potx') return {...(await parsePptx(f)), unit: 'slide'};
+  if (ext === 'pdf') return parsePdf(f);
+  if (ext === 'docx' || ext === 'dotx') return parseDocx(f);
+  if (ext === 'xlsx' || ext === 'xlsm') return parseXlsx(f);
+  if (ext === 'csv' || ext === 'tsv') return parseCsvText(await f.text(), f.name.replace(/\.\w+$/, ''));
+  if (ext === 'html' || ext === 'htm') return parseHtmlText(await f.text());
+  if (ext === 'txt' || ext === 'md' || ext === 'markdown' || ext === 'rtf') return parsePlainText(ext === 'rtf' ? (await f.text()).replace(/\\par[d]?/g, '\n').replace(/\{\\[^{}]*\}|\\[a-z]+-?\d* ?|[{}]/g, '') : await f.text());
+  if (ext === 'ppt' || ext === 'doc' || ext === 'xls') throw new Error(`old .${ext} format: open it and “Save as” .${ext}x (or export to PDF), then upload again`);
+  if (['png', 'jpg', 'jpeg', 'gif', 'webp'].includes(ext)) { return finishDeck([{n: 1, title: f.name.replace(/\.\w+$/, ''), paras: [], tables: [], images: [URL.createObjectURL(f)], notes: ''}], 'image'); }
+  throw new Error('unsupported file type. Use PowerPoint (.pptx), PDF, Word (.docx), Excel (.xlsx), CSV, HTML, text or images');
+}
+
 /* ---- Study Room: AI helpers (use the LLM chosen in Live LLM settings) ---- */
 function deckContext(slides, maxChars = 3500) {
   let out = '';
@@ -3514,14 +3742,9 @@ async function studyLoad(files) {
   for (const f of files) {
     try {
       if (f.size > 80e6) throw new Error('file is larger than 80 MB');
-      let parsed;
-      if (/\.pptx$/i.test(f.name)) parsed = await parsePptx(f);
-      else if (/\.(txt|md)$/i.test(f.name)) { const txt = await f.text(); const blocks = txt.split(/\n(?=#{1,3}\s)|\n\s*\n\s*\n/).map(b => b.trim()).filter(Boolean); parsed = {slides: blocks.map((b, i) => { const ls = b.split('\n').map(x => x.replace(/^#+\s*|^[-*•]\s*/, '').trim()).filter(Boolean); return {n: i + 1, title: ls[0].slice(0, 160), paras: ls.slice(1), tables: [], images: [], notes: ''}; }), boiler: []}; }
-      else if (/\.ppt$/i.test(f.name)) throw new Error('old .ppt format: open it in PowerPoint and “Save as” .pptx');
-      else if (/\.pdf$/i.test(f.name)) throw new Error('PDF is not supported yet: please upload the .pptx version of the slides');
-      else throw new Error('unsupported file type (use .pptx, .txt or .md)');
+      const parsed = await readStudyFile(f);
       if (!parsed.slides.length) throw new Error('no slide text found');
-      const deck = {id: 'd' + Date.now() + Math.random().toString(36).slice(2, 6), name: f.name.replace(/\.(pptx|txt|md)$/i, ''), ...parsed, aiNotes: null, quiz: null, help: [], visual: {}, bestQuiz: null};
+      const deck = {id: 'd' + Date.now() + Math.random().toString(36).slice(2, 6), name: f.name.replace(/\.[A-Za-z0-9]+$/, ''), ext: (f.name.split('.').pop() || '').toUpperCase(), ...parsed, aiNotes: null, quiz: null, help: [], visual: {}, bestQuiz: null};
       deck.terms = keyTerms(deck.slides); deck.notesMd = ruleNotes(deck);
       STUDY.decks.push(deck); STUDY.active = deck.id; STUDY.slide = 0; STUDY.tab = 'notes';
       logActivity({short: 'Study'}, `Loaded ${deck.name}: ${deck.slides.length} slides`);
@@ -3531,10 +3754,10 @@ async function studyLoad(files) {
 }
 function studyHTML() {
   const d = studyDeck(), live = llmLive(), m = STUDY.msg;
-  let html = `<section class="card"><div class="thead"><div class="t"><div class="small muted" style="font-weight:700">STUDY ROOM</div><h2>📚 Learn from your session slides</h2><p class="role">Upload a session's PowerPoint (.pptx). You get study notes, visual explanations, quiz practice and help grounded in the slides, plus links to the matching OpsLab simulations. The file is read in your browser. Slide text is sent only to the LLM you choose in the panel on the right (with Ollama it never leaves your computer). Without an LLM, everything still works in a simpler, slide-based way.</p></div></div>
-    <label class="dropzone" id="studyDrop"><input type="file" id="studyFile" accept=".pptx,.txt,.md" multiple hidden><b>⬆ Drop .pptx files here</b> or click to choose<span class="small muted">PowerPoint .pptx (also .txt / .md notes) · several files at once is fine</span></label>
+  let html = `<section class="card"><div class="thead"><div class="t"><div class="small muted" style="font-weight:700">STUDY ROOM</div><h2>📚 Learn from your session material</h2><p class="role">Upload a session's slides or readings: PowerPoint, PDF, Word, Excel and more. You get study notes, visual explanations, quiz practice and help grounded in the slides, plus links to the matching OpsLab simulations. The file is read in your browser. Slide text is sent only to the LLM you choose in the panel on the right (with Ollama it never leaves your computer). Without an LLM, everything still works in a simpler, slide-based way.</p></div></div>
+    <label class="dropzone" id="studyDrop"><input type="file" id="studyFile" accept=".pptx,.ppsx,.pdf,.docx,.xlsx,.xlsm,.csv,.tsv,.html,.htm,.txt,.md,.rtf,.png,.jpg,.jpeg,.gif,.webp" multiple hidden><b>⬆ Drop your files here</b> or click to choose<span class="small muted">PowerPoint (.pptx), PDF, Word (.docx), Excel (.xlsx), CSV, HTML, text/Markdown or images · several files at once is fine</span></label>
     ${m ? `<div class="msg ${m.err ? 'error' : 'tool'} ${STUDY.busy ? 'dots' : ''}" style="margin-top:8px">${esc(m.text)}</div>` : ''}
-    ${STUDY.decks.length ? `<div class="rchips" style="margin-top:10px">${STUDY.decks.map(x => `<span class="rchip ${x.id === STUDY.active ? 'now' : ''}" data-deck="${x.id}" style="cursor:pointer">${esc(x.name)} · ${x.slides.length} slides <b data-del="${x.id}" title="Remove" style="margin-left:4px">×</b></span>`).join('')}</div>` : ''}</section>`;
+    ${STUDY.decks.length ? `<div class="rchips" style="margin-top:10px">${STUDY.decks.map(x => `<span class="rchip ${x.id === STUDY.active ? 'now' : ''}" data-deck="${x.id}" style="cursor:pointer">${esc(x.name)} <span class="muted">${esc(x.ext || '')}</span> · ${x.slides.length} ${x.unit || 'slide'}${x.slides.length > 1 ? 's' : ''} <b data-del="${x.id}" title="Remove" style="margin-left:4px">×</b></span>`).join('')}</div>` : ''}</section>`;
   if (!d) return html + `<section class="card"><div class="empty">No session loaded yet. Upload a .pptx to start.</div></section>`;
   const tabs = [['notes', '📝 Notes'], ['visual', '🖼 Visual explanation'], ['quiz', '❓ Quiz practice'], ['help', '💬 Ask for help']];
   const links = opsLinks(d.slides.map(slideText).join('\n'));
@@ -3554,7 +3777,7 @@ function studyTabHTML(d, live) {
   if (STUDY.tab === 'visual') {
     const s = d.slides[Math.min(STUDY.slide, d.slides.length - 1)], v = d.visual[s.n] || ruleVisual(s), links = opsLinks(slideText(s), 1);
     return `<div class="actions"><button class="btn small" id="studyPrev" ${s.n === 1 ? 'disabled' : ''}>◀ Prev</button><select id="studySlide" class="tsa-sel" style="max-width:420px">${d.slides.map(x => `<option value="${x.n - 1}" ${x.n === s.n ? 'selected' : ''}>${x.n}. ${esc(shortText(x.title, 70))}</option>`).join('')}</select><button class="btn small" id="studyNext" ${s.n === d.slides.length ? 'disabled' : ''}>Next ▶</button></div>
-      <div class="two" style="margin-top:10px"><div class="slide-card"><div class="small muted">Slide ${s.n} of ${d.slides.length}</div><h3 style="margin:2px 0 8px">${esc(s.title)}</h3>
+      <div class="two" style="margin-top:10px"><div class="slide-card"><div class="small muted">${(d.unit || 'slide').replace(/^./, c => c.toUpperCase())} ${s.n} of ${d.slides.length}</div><h3 style="margin:2px 0 8px">${esc(s.title)}</h3>
         ${s.images.length ? `<div class="slide-imgs">${s.images.map(u => `<img src="${u}" alt="Image from slide ${s.n}">`).join('')}</div>` : ''}
         ${s.paras.length ? `<ul class="clean small">${s.paras.slice(0, 14).map(p => `<li class="${isCode(p) ? 'mono' : ''}">${esc(p)}</li>`).join('')}</ul>` : ''}
         ${s.tables.map(t => `<div class="scroll-x"><table class="tbl ex">${t.slice(0, 12).map((r, i) => `<tr>${r.map(c => i ? `<td>${esc(c)}</td>` : `<th>${esc(c)}</th>`).join('')}</tr>`).join('')}</table></div>`).join('')}

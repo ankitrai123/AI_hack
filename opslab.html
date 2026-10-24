@@ -1881,7 +1881,7 @@ function render() {
 function reportHTML() {
   const used = TOPICS.filter(t => state.runs[t.id].length);
   let html = `<section class="card doc"><div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><div style="flex:1"><h2>End-of-run report</h2><p class="muted" style="margin:0">Prepared by the OpsLab Agent from your logged runs · ${new Date().toLocaleString()}</p></div><button class="btn primary noprint" id="printBtn">Print / save as PDF</button></div>`;
-  const ts = (state.tsaDone || []).length ? `<div class="rep-topic"><h3>${TOPICS.length + 1}. Time Series Analysis (ARIMA)</h3>${state.tsaDone.map((r, n) => `<p class="small" style="margin:10px 0 4px"><b>Lab ${n + 1}:</b> ${esc(r.name)}${r.mystery ? ' (mystery)' : ''}, sample ${r.seed}. True process ARIMA(${r.truth.join(',')}). Decisions correct: <b>${r.score}/8</b>. Chosen model ${r.chosen}, test MAPE ${r.mape.toFixed(2)}% (automatic AIC search ${r.bench}: ${r.benchMape.toFixed(2)}%).</p>
+  const ts = (state.tsaDone || []).length ? `<div class="rep-topic"><h3>${TOPICS.length + 1}. Time Series Analysis (ARIMA, SARIMA &amp; smoothing)</h3>${state.tsaDone.map((r, n) => `<p class="small" style="margin:10px 0 4px"><b>Lab ${n + 1}:</b> ${esc(r.name)}${r.mystery ? ' (mystery)' : ''}, sample ${r.seed}. True process ${Array.isArray(r.truth) ? `ARIMA(${r.truth.join(',')})` : r.truth}. Decisions correct: <b>${r.score}/8</b>. Chosen model ${r.chosen}, test MAPE ${r.mape.toFixed(2)}% (automatic AIC search ${r.bench}: ${r.benchMape.toFixed(2)}%).</p>
       <table class="tbl"><tbody>${TSA_STEPS.map((t, i) => { const g = r.grades[i + 1]; return `<tr><td>${i + 1}. ${esc(t)}</td><td class="${g && g.ok ? 'up' : 'down'}">${g ? (g.ok ? '✓' : '✗') : '–'}</td><td class="small">${g ? esc(g.text.replace(/^[✓✗] /, '')) : ''}</td></tr>`; }).join('')}</tbody></table>`).join('')}</div>` : '';
   if (!used.length) return html + (ts || `<div class="empty" style="margin-top:14px">No runs yet. Run at least one simulation and the report fills in automatically.</div>`) + '</section>';
   const overall = sum(used.map(t => bestRun(t).analysis.eff)) / used.length;
@@ -2842,18 +2842,28 @@ async function useOllama() {
 
 /* ---------------- 10. Time Series Analysis lab: statistics engine ----------------
    Data generation, ADF test (autolag AIC, MacKinnon p-values as in statsmodels' adfuller), ACF with
-   Bartlett bands, PACF (Durbin–Levinson), ARIMA(p,d,q) fitting by conditional least squares with
-   stationarity/invertibility enforced, multi-step forecasts, AIC/BIC and test-set accuracy. */
-const TS_N = 365, TS_TEST = 30, TS_START = Date.UTC(2025, 0, 1);
+   Bartlett bands, PACF (Durbin–Levinson), ARIMA and seasonal SARIMA(p,d,q)(P,D,Q)₇ fitting by
+   conditional least squares with stationarity/invertibility enforced, exponential smoothing
+   (SES, Holt, Holt-Winters additive and multiplicative), simple benchmarks (naïve, seasonal naïve,
+   moving average), multi-step forecasts, AIC/BIC and test-set accuracy. */
+const TS_N = 365, TS_TEST = 30, TS_START = Date.UTC(2025, 0, 1), TS_S = 7;
 const TS_SETS = {
   cylinders: {name: 'Oxygen cylinders used per day, city hospital', unit: 'cylinders', truth: [2, 0, 0], story: 'A 400-bed hospital tracks oxygen cylinders used each day to plan deliveries from its gas supplier.'},
   milk: {name: 'Daily milk demand (kg), dairy cooperative', unit: 'kg', truth: [0, 1, 1], story: 'A dairy cooperative in Visakhapatnam records daily milk demand from its retail booths to plan procurement from farmers.'},
   parcels: {name: 'E-commerce parcels handled per day, sorting hub', unit: 'parcels', truth: [1, 1, 0], story: 'A growing e-commerce sorting hub records parcels handled each day to plan staffing and trucks.'},
   tickets: {name: 'Customer-service tickets per day', unit: 'tickets', truth: [0, 0, 2], story: 'A telecom call centre logs new service tickets per day to roster its agents.'},
-  veg: {name: 'Vegetable demand (kg) per day, online grocery hub', unit: 'kg', truth: [1, 1, 1], story: 'An online grocery dark store records daily vegetable demand to set purchase orders with mandis.'}
+  veg: {name: 'Vegetable demand (kg) per day, online grocery hub', unit: 'kg', truth: [1, 1, 1], story: 'An online grocery dark store records daily vegetable demand to set purchase orders with mandis.'},
+  canteen: {name: 'Meals served per day, factory canteen', unit: 'meals', truth: [1, 0, 0], seas: [0, 1, 1], look: ['seas', 'trendseas'], story: 'A two-shift auto-parts plant near Sri City runs its own canteen. It records meals served each day to order vegetables, plan cooks and book gas cylinders. Weekends are quiet.'},
+  footfall: {name: 'Shoppers per day, city mall', unit: 'shoppers', truth: [0, 0, 1], seas: [0, 1, 1], look: ['trendseas'], story: 'A new mall records footfall each day to plan security, housekeeping and parking staff. Weekends are busy and the mall is still growing.'}
 };
 const TS_IDS = Object.keys(TS_SETS);
+const tsSeas = id => TS_SETS[id].seas || [0, 0, 0];
+const tsSpecLabel = (p, d, q, P = 0, D = 0, Q = 0) => (P || D || Q ? `SARIMA(${p},${d},${q})(${P},${D},${Q})₇` : `ARIMA(${p},${d},${q})`);
+const tsTruthLabel = id => tsSpecLabel(...TS_SETS[id].truth, ...tsSeas(id));
+const TS_DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const tsDow = i => (3 + i) % 7; // 1 Jan 2025 was a Wednesday
 const tsDiff = a => a.slice(1).map((v, i) => v - a[i]);
+const sDiff = (a, s = TS_S) => a.slice(s).map((v, i) => v - a[i]);
 function tsGenerate(id, seed) {
   const burn = 150, N = TS_N + burn, z = stdNormals(9001 + seed * 104729 + TS_IDS.indexOf(id) * 7919, N + 2);
   const y = [];
@@ -2863,6 +2873,10 @@ function tsGenerate(id, seed) {
   if (id === 'milk') { const w = []; for (let t = 1; t < N + 1; t++) w.push(0.4 + 4 * (z[t] + 0.6 * z[t - 1])); y.push(...integrate(w.slice(burn), 500)); }
   if (id === 'parcels') { const w = []; let a = 0; for (let t = 0; t < N; t++) { a = 0.7 * a + 3 * z[t]; w.push(0.3 + a); } y.push(...integrate(w.slice(burn), 800)); }
   if (id === 'veg') { const w = []; let a = 0; for (let t = 1; t < N + 1; t++) { a = 0.5 * a + 3 * (z[t] + 0.4 * z[t - 1]); w.push(0.2 + a); } y.push(...integrate(w.slice(burn), 1000)); }
+  // (1 − 0.5B)(1 − B⁷) yₜ = (1 − 0.6B⁷) εₜ : a weekly pattern whose weekday levels drift slowly.
+  if (id === 'canteen') { const prof = [-300, 40, 60, 50, 45, 25, -140]; let a = 0; for (let t = 0; t < TS_N; t++) { a = 0.5 * a + 14 * (z[t + 7] - 0.6 * z[t]); y.push(t < 7 ? 620 + prof[tsDow(t)] + a : y[t - 7] + a); } }
+  // (1 − B⁷) yₜ = 14 + (1 + 0.5B)(1 − 0.6B⁷) εₜ : steady growth (14 shoppers a week) plus a weekly pattern.
+  if (id === 'footfall') { const prof = [950, -250, -300, -280, -220, 150, 800]; for (let t = 0; t < TS_N; t++) { const u = 35 * (z[t + 8] + 0.5 * z[t + 7] - 0.6 * z[t + 1] - 0.3 * z[t]); y.push(t < 7 ? 3200 + prof[tsDow(t)] + 2 * t + u : y[t - 7] + 14 + u); } }
   const out = (y.length > TS_N ? y.slice(y.length - TS_N) : y).map(v => Math.round(Math.max(1, v) * 10) / 10);
   return out;
 }
@@ -2918,8 +2932,10 @@ function pacf(x, L) {
 // Reads a correlogram the way the slides teach. Returns every defensible reading:
 // 'cut' after k (first k lags significant, then at most one stray spike up to lag 10),
 // 'tails' (significant lags that shrink gradually, or many significant lags), or 'none'.
-function corrPattern(vals, bands) {
-  const sig = vals.map((v, i) => Math.abs(v) > bands[i]);
+// With s > 0 the lags next to the weekly lags (s±1, 2s±1, 3s±1) are left out: they belong to the seasonal reading.
+function corrPattern(vals, bands, s = 0) {
+  const masked = L => s > 0 && [1, 2, 3].some(k => Math.abs(L - k * s) <= 1);
+  const sig = vals.map((v, i) => !masked(i + 1) && Math.abs(v) > bands[i]);
   let lead = 0; while (lead < sig.length && sig[lead]) lead++;
   const later = sig.slice(lead + 1, 10).filter(Boolean).length, slow = vals.length >= 10 && vals[9] > 0.5;
   const ok = [];
@@ -2929,6 +2945,15 @@ function corrPattern(vals, bands) {
   if (slow || lead >= 4 || shrinking || (lead >= 1 && later >= 2)) ok.push({type: 'tails', lag: lead});
   if (!ok.length) ok.push(lead ? {type: 'cut', lag: lead} : {type: 'none', lag: 0});
   return {ok, main: ok[0], lead, later, slow, sig};
+}
+// Seasonal reading at lags s, 2s, 3s: one spike at s → order 1; decaying spikes → seasonal 'tails'; none → 0.
+function seasPattern(vals, bands, s = TS_S) {
+  const at = k => (vals.length >= k * s ? {v: vals[k * s - 1], b: bands[k * s - 1], sig: Math.abs(vals[k * s - 1]) > bands[k * s - 1]} : {v: NaN, b: 1, sig: false});
+  const a1 = at(1), a2 = at(2), a3 = at(3), ok = [];
+  if (!a1.sig) ok.push({type: 'none'});
+  else if (!a2.sig) { ok.push({type: 'cut'}); if (Math.abs(a2.v) > 0.7 * a2.b) ok.push({type: 'tails'}); }
+  else { ok.push({type: 'tails'}); if (!a3.sig && Math.abs(a2.v) < 0.5 * Math.abs(a1.v)) ok.push({type: 'cut'}); }
+  return {ok, main: ok[0], vals: [a1.v, a2.v, a3.v], sig: [a1.sig, a2.sig, a3.sig], slow: a1.v > 0.5 && a2.v > 0.4};
 }
 function nelderMead(f, x0, steps, iters) {
   const n = x0.length; let S = [x0.slice()]; for (let i = 0; i < n; i++) { const x = x0.slice(); x[i] += steps[i]; S.push(x); }
@@ -2946,40 +2971,113 @@ function nelderMead(f, x0, steps, iters) {
   const b = F.indexOf(Math.min(...F)); return S[b];
 }
 function pacfToCoef(r) { let phi = []; for (let k = 0; k < r.length; k++) { const prev = phi.slice(); phi = prev.map((v, j) => v - r[k] * prev[k - 1 - j]); phi.push(r[k]); } return phi; }
-function arimaFit(y, p, d, q, useLog = false) {
-  const base = useLog ? y.map(Math.log) : y.slice(), levels = [base];
-  for (let i = 0; i < d; i++) levels.push(tsDiff(levels[i]));
-  const w = levels[d], n = w.length, sdw = stdev(w) || 1;
-  const unpack = th => ({mu: th[0], phi: pacfToCoef(th.slice(1, 1 + p).map(Math.tanh)), theta: pacfToCoef(th.slice(1 + p).map(Math.tanh)).map(v => -v)});
-  const resid = th => { const {mu, phi, theta} = unpack(th), e = new Array(n).fill(0); let sse = 0;
-    for (let t = p; t < n; t++) { let pr = mu; for (let i = 0; i < p; i++) pr += phi[i] * (w[t - 1 - i] - mu); for (let j = 0; j < q; j++) if (t - 1 - j >= 0) pr += theta[j] * e[t - 1 - j]; e[t] = w[t] - pr; sse += e[t] * e[t]; }
+// Multiply the non-seasonal and seasonal lag polynomials into one set of lag coefficients.
+// AR side: (1 − ΣaᵢBⁱ)(1 − ΣAⱼB^{sj}) = 1 − ΣcₖBᵏ.  MA side: (1 + ΣmᵢBⁱ)(1 + ΣMⱼB^{sj}) = 1 + ΣcₖBᵏ.
+function sarCoefs(a, A, s) { const c = new Array(a.length + s * A.length).fill(0); a.forEach((v, i) => (c[i] += v)); A.forEach((V, j) => { c[s * (j + 1) - 1] += V; a.forEach((v, i) => (c[s * (j + 1) + i] -= v * V)); }); return c; }
+function smaCoefs(m, M, s) { const c = new Array(m.length + s * M.length).fill(0); m.forEach((v, i) => (c[i] += v)); M.forEach((V, j) => { c[s * (j + 1) - 1] += V; m.forEach((v, i) => (c[s * (j + 1) + i] += v * V)); }); return c; }
+function arimaFit(y, p, d, q, useLog = false, P = 0, D = 0, Q = 0, s = TS_S) {
+  const base = useLog ? y.map(Math.log) : y.slice(), levels = [base], ops = [...new Array(D).fill('s'), ...new Array(d).fill('r')];
+  ops.forEach((op, i) => levels.push(op === 's' ? sDiff(levels[i], s) : tsDiff(levels[i])));
+  const w = levels[ops.length], n = w.length, sdw = stdev(w) || 1, noMu = d + D >= 2, o = noMu ? 0 : 1, tf = v => v.map(Math.tanh);
+  const unpack = th => {
+    const phi = pacfToCoef(tf(th.slice(o, o + p))), theta = pacfToCoef(tf(th.slice(o + p, o + p + q))).map(v => -v);
+    const Phi = pacfToCoef(tf(th.slice(o + p + q, o + p + q + P))), Theta = pacfToCoef(tf(th.slice(o + p + q + P))).map(v => -v);
+    return {mu: noMu ? 0 : th[0], phi, theta, Phi, Theta, ar: sarCoefs(phi, Phi, s), ma: smaCoefs(theta, Theta, s)};
+  };
+  const nAR = p + s * P;
+  const resid = th => { const {mu, ar, ma} = unpack(th), e = new Array(n).fill(0); let sse = 0;
+    for (let t = nAR; t < n; t++) { let pr = mu; for (let i = 0; i < ar.length; i++) pr += ar[i] * (w[t - 1 - i] - mu); for (let j = 0; j < ma.length; j++) if (t - 1 - j >= 0) pr += ma[j] * e[t - 1 - j]; e[t] = w[t] - pr; sse += e[t] * e[t]; }
     return {sse, e}; };
-  const th = (p + q) ? nelderMead(x => resid(x).sse, [mean(w), ...new Array(p + q).fill(0)], [sdw * 0.5, ...new Array(p + q).fill(0.4)], 500 * (p + q + 1)) : [mean(w)];
-  const {sse, e} = resid(th), nEff = n - p, s2 = sse / nEff, ll = -nEff / 2 * (Math.log(2 * Math.PI * s2) + 1), k = p + q + 2;
-  return {p, d, q, log: useLog, ...unpack(th), sigma2: s2, ll, aic: -2 * ll + 2 * k, bic: -2 * ll + k * Math.log(nEff), e, w, levels};
+  const np = p + q + P + Q, x0 = [...(noMu ? [] : [mean(w)]), ...new Array(np).fill(0)], st = [...(noMu ? [] : [sdw * 0.5]), ...new Array(np).fill(0.4)];
+  const th = np ? nelderMead(x => resid(x).sse, x0, st, 500 * x0.length) : x0;
+  const {sse, e} = resid(th), nEff = n - nAR, s2 = sse / nEff, ll = -nEff / 2 * (Math.log(2 * Math.PI * s2) + 1), k = np + o + 1;
+  return {p, d, q, P, D, Q, s, log: useLog, ...unpack(th), sigma2: s2, ll, k, aic: -2 * ll + 2 * k, bic: -2 * ll + k * Math.log(nEff), e, w, levels, ops};
+}
+// Undo seasonal and regular differences, level by level.
+function tsUndiff(levels, ops, f, s = TS_S) {
+  for (let lev = ops.length - 1; lev >= 0; lev--) { const ext = levels[lev].slice(), n0 = ext.length; f.forEach(v => ext.push(v + (ops[lev] === 's' ? ext[ext.length - s] : ext[ext.length - 1]))); f = ext.slice(n0); }
+  return f;
 }
 function arimaForecast(fit, h) {
-  const {mu, phi, theta, p, q, d} = fit, W = fit.w.slice(), E = fit.e.slice();
-  for (let s = 0; s < h; s++) { const t = W.length; let pr = mu; for (let i = 0; i < p; i++) pr += phi[i] * (W[t - 1 - i] - mu); for (let j = 0; j < q; j++) if (t - 1 - j < fit.e.length) pr += theta[j] * E[t - 1 - j]; W.push(pr); E.push(0); }
-  let f = W.slice(fit.w.length);
-  for (let lev = d - 1; lev >= 0; lev--) { let last = fit.levels[lev][fit.levels[lev].length - 1]; f = f.map(v => (last += v)); }
+  const {mu, ar, ma} = fit, W = fit.w.slice(), E = fit.e.slice();
+  for (let k = 0; k < h; k++) { const t = W.length; let pr = mu; for (let i = 0; i < ar.length; i++) pr += ar[i] * (W[t - 1 - i] - mu); for (let j = 0; j < ma.length; j++) if (t - 1 - j < fit.e.length) pr += ma[j] * E[t - 1 - j]; W.push(pr); E.push(0); }
+  const f = tsUndiff(fit.levels, fit.ops, W.slice(fit.w.length), fit.s);
   return fit.log ? f.map(Math.exp) : f;
+}
+// Exponential smoothing: SES, Holt (linear trend), Holt-Winters additive / multiplicative.
+// Smoothing constants are chosen to minimise the one-step-ahead squared errors on the training data.
+function esRun(y, kind, a, b, g, s = TS_S) {
+  let l, bt = 0, seas = null;
+  if (kind === 'ses') l = y[0];
+  else if (kind === 'holt') { bt = y[1] - y[0]; l = y[0] - bt; }
+  else {
+    const m1 = mean(y.slice(0, s)), m2 = mean(y.slice(s, 2 * s)); bt = (m2 - m1) / s; l = m1 - bt * (s + 1) / 2;
+    seas = y.slice(0, s).map((v, i) => { const lev = m1 + bt * (i - (s - 1) / 2); return kind === 'hwm' ? v / lev : v - lev; });
+  }
+  let sse = 0;
+  for (let t = 0; t < y.length; t++) {
+    const si = seas ? seas[t % s] : 0, f = kind === 'hwm' ? (l + bt) * si : l + bt + si, e = y[t] - f, lp = l;
+    sse += e * e;
+    if (kind === 'ses') l = a * y[t] + (1 - a) * l;
+    else if (kind === 'holt') { l = a * y[t] + (1 - a) * (l + bt); bt = b * (l - lp) + (1 - b) * bt; }
+    else if (kind === 'hwa') { l = a * (y[t] - si) + (1 - a) * (l + bt); bt = b * (l - lp) + (1 - b) * bt; seas[t % s] = g * (y[t] - l) + (1 - g) * si; }
+    else { l = a * y[t] / si + (1 - a) * (l + bt); bt = b * (l - lp) + (1 - b) * bt; seas[t % s] = g * y[t] / l + (1 - g) * si; }
+  }
+  return {sse, l, bt, seas, n: y.length};
+}
+const logistic = x => 1 / (1 + Math.exp(-x));
+function esFit(y, kind, s = TS_S) {
+  const npar = {ses: 1, holt: 2, hwa: 3, hwm: 3}[kind];
+  const par = th => [logistic(th[0]), npar > 1 ? logistic(th[1]) : 0, npar > 2 ? logistic(th[2]) : 0];
+  const obj = th => { const r = esRun(y, kind, ...par(th), s); return isFinite(r.sse) ? r.sse : 1e300; };
+  let best = null;
+  for (const st of [[-1, -2.5, -2], [1, -4, -1], [2.5, -1, -3]]) { const th = nelderMead(obj, st.slice(0, npar), new Array(npar).fill(1), 300 * (npar + 1)), v = obj(th); if (!best || v < best.v) best = {th, v}; }
+  const [a, b, g] = par(best.th), r = esRun(y, kind, a, b, g, s), n = y.length, s2 = r.sse / n, ll = -n / 2 * (Math.log(2 * Math.PI * s2) + 1);
+  const k = npar + {ses: 1, holt: 2, hwa: 2 + s, hwm: 2 + s}[kind] + 1;
+  return {kind, alpha: a, beta: b, gamma: g, sigma2: s2, ll, k, aic: -2 * ll + 2 * k, bic: -2 * ll + k * Math.log(n), ...r};
+}
+function esForecast(fit, h, s = TS_S) {
+  return Array.from({length: h}, (_, i) => { const si = fit.seas ? fit.seas[(fit.n + i) % s] : 0; return fit.kind === 'hwm' ? (fit.l + (i + 1) * fit.bt) * si : fit.l + (i + 1) * fit.bt + si; });
 }
 function accuracy(actual, pred) {
   const e = actual.map((v, i) => v - pred[i]);
   return {rmse: Math.sqrt(mean(e.map(v => v * v))), mae: mean(e.map(Math.abs)), mape: 100 * mean(e.map((v, i) => Math.abs(v / actual[i])))};
 }
-function tsEvaluate(y, p, d, q, useLog = false) {
-  const train = y.slice(0, TS_N - TS_TEST), test = y.slice(TS_N - TS_TEST), fit = arimaFit(train, p, d, q, useLog), fc = arimaForecast(fit, TS_TEST);
-  return {p, d, q, log: useLog, fit, fc, ...accuracy(test, fc), aic: fit.aic, bic: fit.bic, label: `ARIMA(${p},${d},${q})${useLog ? ' on log' : ''}`};
+// Every model family the lab offers. 'arima' covers AR, MA, ARMA, ARIMA and SARIMA.
+const TS_FAMS = {arima: 'ARIMA / SARIMA', naive: 'Naïve (last value)', snaive: 'Seasonal naïve (same weekday last week)', ma: 'Moving average', ses: 'Simple exponential smoothing (SES)', holt: "Holt's linear trend", hwa: 'Holt-Winters additive', hwm: 'Holt-Winters multiplicative'};
+const TS_ES_NAMES = {ses: 'SES', holt: "Holt's linear trend", hwa: 'Holt-Winters additive', hwm: 'Holt-Winters multiplicative'};
+function tsModel(y, sp) {
+  const n = y.length, s = TS_S, fam = sp.fam || 'arima';
+  if (fam === 'naive') return {label: 'Naïve', k: 0, aic: NaN, bic: NaN, params: 'ŷ = last observed value', forecast: h => new Array(h).fill(y[n - 1])};
+  if (fam === 'snaive') return {label: 'Seasonal naïve', k: 0, aic: NaN, bic: NaN, params: 'ŷ = value on the same weekday last week', forecast: h => Array.from({length: h}, (_, i) => y[n - s + (i % s)])};
+  if (fam === 'ma') { const w = sp.w || 7, m = mean(y.slice(n - w)); return {label: `Moving average (${w} days)`, k: 0, aic: NaN, bic: NaN, params: `ŷ = mean of the last ${w} days = ${n2(m)}`, forecast: h => new Array(h).fill(m)}; }
+  if (TS_ES_NAMES[fam]) { const f = esFit(y, fam); return {label: TS_ES_NAMES[fam], k: f.k, aic: f.aic, bic: f.bic, fit: f, params: `α=${n2(f.alpha)}${fam !== 'ses' ? ` β=${n2(f.beta)}` : ''}${f.seas ? ` γ=${n2(f.gamma)}` : ''} σ²=${n2(f.sigma2)}`, forecast: h => esForecast(f, h)}; }
+  const f = arimaFit(y, sp.p, sp.d, sp.q, !!sp.log, sp.P || 0, sp.D || 0, sp.Q || 0);
+  const co = (nm, a) => a.map((v, i) => ` ${nm}${i + 1}=${n2(v)}`).join('');
+  return {label: tsSpecLabel(sp.p, sp.d, sp.q, sp.P || 0, sp.D || 0, sp.Q || 0) + (sp.log ? ' on log' : ''), k: f.k, aic: f.aic, bic: f.bic, fit: f, params: `c=${n2(f.mu)}${co('φ', f.phi)}${co('θ', f.theta)}${co('sar', f.Phi)}${co('sma', f.Theta)} σ²=${n2(f.sigma2)}`, forecast: h => arimaForecast(f, h)};
 }
-// Automatic benchmark: choose d by repeated ADF tests, then the lowest-AIC ARIMA(p,d,q) for p, q in 0..3.
+function tsEvalSpec(y, sp) {
+  const nTr = TS_N - TS_TEST, m = tsModel(y.slice(0, nTr), sp), fc = m.forecast(TS_TEST);
+  return {...m, spec: sp, fam: sp.fam || 'arima', p: sp.p || 0, d: sp.d || 0, q: sp.q || 0, P: sp.P || 0, D: sp.D || 0, Q: sp.Q || 0, log: !!sp.log, fc, ...accuracy(y.slice(nTr), fc)};
+}
+function tsEvaluate(y, p, d, q, useLog = false, P = 0, D = 0, Q = 0) { return tsEvalSpec(y, {fam: 'arima', p, d, q, P, D, Q, log: useLog}); }
+// Weekly seasonality check on a series: ACF at lag 7 and 14, and whether lag 7 stands out from its neighbours.
+function tsSeasonCheck(w, s = TS_S) { const r = acf(w, 2 * s + 1), v = r[s - 1], v2 = r[2 * s - 1], nb = (r[s - 2] + r[s]) / 2; return {r7: v, r14: v2, strong: v > 0.3 && v2 > 0.2 && v - nb > 0.08}; }
+// Automatic benchmark: seasonal difference if a weekly pattern shows, d by repeated ADF tests, then the
+// lowest-AIC model over p, q ≤ 3 (non-seasonal) or p, q ≤ 2 and P, Q ≤ 1 (seasonal).
 function tsBenchmark(y) {
-  let d = 0, s = y.slice(0, TS_N - TS_TEST);
-  while (d < 2 && adfTest(s).p > 0.05) { s = tsDiff(s); d++; }
-  let best = null;
-  for (let p = 0; p <= 3; p++) for (let q = 0; q <= 3; q++) { const r = tsEvaluate(y, p, d, q); if (!best || r.aic < best.aic) best = r; }
-  return best;
+  const tr = y.slice(0, TS_N - TS_TEST); let D = 0, s = tr;
+  if (tsSeasonCheck(tr).strong || tsSeasonCheck(tsDiff(tr)).strong) { D = 1; s = sDiff(tr); }
+  let d = 0; while (d < 2 && adfTest(s).p > 0.05) { s = tsDiff(s); d++; }
+  const pq = D ? 2 : 3, PQ = D ? 1 : 0; let best = null;
+  for (let p = 0; p <= pq; p++) for (let q = 0; q <= pq; q++) for (let P = 0; P <= PQ; P++) for (let Q = 0; Q <= PQ; Q++) { const r = tsEvaluate(y, p, d, q, false, P, D, Q); if (!best || r.aic < best.aic) best = r; }
+  best.auto = true; return best;
+}
+// The agent's model tournament: every family on the same training/test split.
+function tsTournament(y, extra = []) {
+  const rows = [{fam: 'naive'}, {fam: 'snaive'}, {fam: 'ma', w: 7}, {fam: 'ses'}, {fam: 'holt'}, {fam: 'hwa'}, {fam: 'hwm'}].map(sp => tsEvalSpec(y, sp));
+  const all = [...extra, ...rows], seen = new Set();
+  return all.filter(r => (seen.has(r.label) ? false : seen.add(r.label))).sort((a, b) => a.mape - b.mape);
 }
 
 /* ---- Time Series Analysis lab: stepwise UI ----
@@ -2990,14 +3088,15 @@ const TSA_STEPS = ['Visualise the series', 'Test for stationarity (ADF)', 'Make 
 function tsaNew(ds, seed) {
   const mystery = ds === 'mystery';
   const real = mystery ? TS_IDS[Math.floor(rng(seed * 31 + 5)() * TS_IDS.length)] : ds;
-  state.tsa = {ds: real, mystery, seed, step: 1, log: false, d: 0, dec: {}, out: {}, grades: {}, hist: [], fits: null, final: null, lags: 20};
+  state.tsa = {ds: real, mystery, seed, step: 1, log: false, d: 0, D: 0, dec: {}, out: {}, grades: {}, hist: [], fits: null, final: null, lags: 30};
   tsaSay(`New dataset loaded: ${mystery ? 'mystery series' : TS_SETS[real].name} (sample ${seed}). I will run only the analyses you ask for and check each decision. Step 1: look at the plot and decide whether the series is stationary.`);
 }
 const tsaY = () => { const s = state.tsa, k = s.ds + ':' + s.seed; return TSA.cache[k] || (TSA.cache[k] = tsGenerate(s.ds, s.seed)); };
-function tsaSeries() { const s = state.tsa; let b = s.log ? tsaY().map(Math.log) : tsaY().slice(); for (let i = 0; i < s.d; i++) b = tsDiff(b); return b; }
-const tsaLabel = (lg = state.tsa.log, d = state.tsa.d) => `${d === 2 ? 'Δ²' : d === 1 ? 'Δ' : ''}${lg ? 'log(y)' : 'y'}`;
+function tsaSeries() { const s = state.tsa; let b = s.log ? tsaY().map(Math.log) : tsaY().slice(); for (let i = 0; i < s.D; i++) b = sDiff(b); for (let i = 0; i < s.d; i++) b = tsDiff(b); return b; }
+const tsaLabel = (lg = state.tsa.log, d = state.tsa.d, D = state.tsa.D) => `${d === 2 ? 'Δ²' : d === 1 ? 'Δ' : ''}${D ? 'Δ₇' : ''}${lg ? 'log(y)' : 'y'}`;
 const tsaName = () => (state.tsa.mystery ? 'Mystery series' : TS_SETS[state.tsa.ds].name);
 const tsaUnit = () => TS_SETS[state.tsa.ds].unit;
+const tsaSeasonal = () => tsSeas(state.tsa.ds)[1] > 0;
 function tsaSay(text, kind = 'agent', ok) { state.tsa.hist.push({text, kind, ok, step: state.tsa.step, time: new Date()}); }
 function tsaGrade(step, ok, text) { state.tsa.grades[step] = {ok, text}; tsaSay(text, 'verdict', ok); logActivity({short: 'Time series'}, `Step ${step}: ${ok ? 'correct' : 'check'}`); }
 const fmtP = p => (p < 0.0001 ? p.toExponential(2) : p.toFixed(4));
@@ -3020,8 +3119,8 @@ function corrChart(vals, bands, title) {
   let up = '', dn = '';
   bands.forEach((b, i) => { up += `${i ? 'L' : 'M'}${X(i) - pw / n / 2},${Y(b)} L${X(i) + pw / n / 2},${Y(b)} `; dn = `L${X(i) + pw / n / 2},${Y(-b)} L${X(i) - pw / n / 2},${Y(-b)} ` + dn; });
   g += `<path d="${up}${dn}Z" fill="var(--you)" opacity=".13"/>`;
-  vals.forEach((v, i) => { const sig = Math.abs(v) > bands[i]; g += `<line x1="${X(i)}" x2="${X(i)}" y1="${Y(0)}" y2="${Y(v)}" stroke="${sig ? 'var(--ai)' : 'var(--faint)'}" stroke-width="3" stroke-linecap="round"/><circle cx="${X(i)}" cy="${Y(v)}" r="3.5" fill="${sig ? 'var(--ai)' : 'var(--faint)'}"/><rect class="hit" x="${X(i) - pw / n / 2}" y="${Tp}" width="${pw / n}" height="${ph}" data-tip="Lag ${i + 1}: ${v.toFixed(3)}\n95% band ±${bands[i].toFixed(3)}${sig ? ' · significant' : ''}"/>`; if (n <= 20 || (i + 1) % 5 === 0) g += `<text x="${X(i)}" y="${Tp + ph + 14}" text-anchor="middle">${i + 1}</text>`; });
-  g += `<line class="axis" x1="${L}" x2="${W - R}" y1="${Y(0)}" y2="${Y(0)}"/><text x="${L + pw / 2}" y="${Hh - 2}" text-anchor="middle">Lag</text>`;
+  vals.forEach((v, i) => { const sig = Math.abs(v) > bands[i]; g += `<line x1="${X(i)}" x2="${X(i)}" y1="${Y(0)}" y2="${Y(v)}" stroke="${sig ? 'var(--ai)' : 'var(--faint)'}" stroke-width="3" stroke-linecap="round"/><circle cx="${X(i)}" cy="${Y(v)}" r="3.5" fill="${sig ? 'var(--ai)' : 'var(--faint)'}"/><rect class="hit" x="${X(i) - pw / n / 2}" y="${Tp}" width="${pw / n}" height="${ph}" data-tip="Lag ${i + 1}: ${v.toFixed(3)}\n95% band ±${bands[i].toFixed(3)}${sig ? ' · significant' : ''}"/>`; if (n <= 20 || (i + 1) % 7 === 0 || i === 0) g += `<text x="${X(i)}" y="${Tp + ph + 14}" text-anchor="middle" ${(i + 1) % 7 === 0 ? 'font-weight="700"' : ''}>${i + 1}</text>`; });
+  g += `<line class="axis" x1="${L}" x2="${W - R}" y1="${Y(0)}" y2="${Y(0)}"/><text x="${L + pw / 2}" y="${Hh - 2}" text-anchor="middle">Lag (weekly lags 7, 14, 21… in bold)</text>`;
   return legend([['Significant lag', 'var(--ai)'], ['Not significant', 'var(--faint)'], ['95% confidence band', 'var(--you)']]) + `<svg class="chart" viewBox="0 0 ${W} ${Hh}" role="img" aria-label="${esc(title)}">${g}</svg>`;
 }
 function tsaSeriesChart(vals, label, opts = {}) {
@@ -3033,98 +3132,122 @@ function tsaSeriesChart(vals, label, opts = {}) {
   return legend(series.map(s => [s.name, s.color, 'line'])) + lineChart({x, series, xLabel: 'Day', yLabel: label, autoY: true, shade: opts.test ? [{from: TS_N - TS_TEST, to: TS_N, label: 'Test (last 30 days)'}] : []});
 }
 function tsaOptions(name, opts, disabled) {
-  return `<div class="tsa-opts">${opts.map(([v, l, extra]) => `<label class="tsa-opt"><input type="radio" name="${name}" value="${v}" ${disabled ? 'disabled' : ''}><span>${l}</span>${extra || ''}</label>`).join('')}</div>`;
+  return `<div class="tsa-opts">${opts.map(([v, l, extra, off]) => `<label class="tsa-opt"><input type="radio" name="${name}" value="${v}" ${disabled || off ? 'disabled' : ''}><span>${l}</span>${extra || ''}</label>`).join('')}</div>`;
 }
 const lagSelect = (id, n = 5) => `<select id="${id}" class="tsa-sel" aria-label="lag">${Array.from({length: n}, (_, i) => `<option value="${i + 1}">${i + 1}</option>`).join('')}</select>`;
+const tsaSel = (id, v, max, min = 0) => `<select id="${id}" class="tsa-sel">${Array.from({length: max - min + 1}, (_, i) => `<option ${i + min === v ? 'selected' : ''}>${i + min}</option>`).join('')}</select>`;
+function weekBlock(w) {
+  const by = TS_DOW.map((_, k) => w.filter((v, i) => tsDow(i + TS_N - w.length) === k)), m = mean(w);
+  return `<table class="tbl ex" style="max-width:520px"><thead><tr><th>Weekday</th><th class="n">Mean</th><th class="n">vs overall</th></tr></thead><tbody>${[1, 2, 3, 4, 5, 6, 0].map(k => `<tr><td>${TS_DOW[k]}</td><td class="n">${n1(mean(by[k]))}</td><td class="n">${(mean(by[k]) - m >= 0 ? '+' : '') + n1(mean(by[k]) - m)}</td></tr>`).join('')}</tbody></table>`;
+}
+const corrRead = (r, sea) => (r.type === 'cut' ? (sea ? 'one spike at lag 7, then cuts off' : `cuts off after lag ${r.lag}`) : r.type === 'tails' ? (sea ? 'spikes at 7, 14, 21… that decay' : 'tails off gradually') : (sea ? 'no significant weekly spikes' : 'has no significant spikes'));
 function tsaStepBody() {
   const s = state.tsa, y = tsaY(), o = s.out, n = s.step;
   if (n === 1) return `${tsaSeriesChart(y, `${tsaName()} (${tsaUnit()})`, {rolling: o.rolling, test: true})}
-    <div class="actions"><button class="btn small" id="tsaRolling" ${o.rolling ? 'disabled' : ''}>📈 Ask the agent: add 30-day rolling mean &amp; std</button><button class="btn small" id="tsaHalves" ${o.halves ? 'disabled' : ''}>📊 Ask the agent: compare first and second half</button></div>
+    <div class="actions"><button class="btn small" id="tsaRolling" ${o.rolling ? 'disabled' : ''}>📈 Ask the agent: add 30-day rolling mean &amp; std</button><button class="btn small" id="tsaHalves" ${o.halves ? 'disabled' : ''}>📊 Ask the agent: compare first and second half</button><button class="btn small" id="tsaWeek" ${o.week ? 'disabled' : ''}>📅 Ask the agent: average by weekday</button></div>
     ${o.halves ? `<table class="tbl ex" style="max-width:420px"><thead><tr><th>Part</th><th class="n">Mean</th><th class="n">Std. dev.</th></tr></thead><tbody>${o.halves.map(h => `<tr><td>${h[0]}</td><td class="n">${n2(h[1])}</td><td class="n">${n2(h[2])}</td></tr>`).join('')}</tbody></table>` : ''}
-    <h4 class="tsa-q">Your decision: by eye, the series is…</h4>${tsaOptions('dec', [['stat', 'Stationary: it fluctuates around a stable mean with constant spread'], ['trend', 'Non-stationary: it has a trend or a wandering level (changing mean)'], ['var', 'Non-stationary: its spread (variance) changes over time']])}`;
+    ${o.week ? weekBlock(y) : ''}
+    <h4 class="tsa-q">Your decision: by eye, the series is…</h4>${tsaOptions('dec', [['stat', 'Stationary: it fluctuates around a stable mean with constant spread'], ['trend', 'Non-stationary: it has a trend or a wandering level (changing mean)'], ['seas', 'Non-stationary: a repeating weekly pattern (seasonality) around a fairly stable level'], ['trendseas', 'Non-stationary: a trend <i>and</i> a repeating weekly pattern'], ['var', 'Non-stationary: its spread (variance) changes over time']])}`;
   if (n === 2) return `${o.adf0 ? adfBlock(o.adf0, 'the original series y') : '<p class="small muted">The agent waits for your request.</p>'}
     <div class="actions"><button class="btn small" id="tsaAdf0" ${o.adf0 ? 'disabled' : ''}>🧪 Ask the agent: run the ADF test on the series</button></div>
     <h4 class="tsa-q">Your decision: at the 5% level, the series is…</h4>${tsaOptions('dec', [['stat', 'Stationary: reject H₀ (p ≤ 0.05)'], ['nonstat', 'Non-stationary: cannot reject H₀ (p > 0.05)']], !o.adf0)}${o.adf0 ? '' : '<p class="small muted">Run the test first.</p>'}`;
-  if (n === 3) return `<p>ADF on the original series: statistic ${o.adf0.stat.toFixed(3)}, p = ${fmtP(o.adf0.p)}. Choose how to prepare the series for ARIMA.</p>
-    <h4 class="tsa-q">Your decision: apply…</h4>${tsaOptions('dec', [['none', 'No transformation: it is already stationary (d = 0)'], ['d1', 'First-order differencing: Δyₜ = yₜ − yₜ₋₁ (d = 1)'], ['d2', 'Second-order differencing: Δ²yₜ (d = 2)'], ['log', 'Log transform only: log(yₜ), to stabilise variance']])}`;
+  if (n === 3) return `<p>ADF on the original series: statistic ${o.adf0.stat.toFixed(3)}, p = ${fmtP(o.adf0.p)}. ${s.dec.eye === 'seas' || s.dec.eye === 'trendseas' ? 'You saw a weekly pattern in Step 1. ' : ''}Choose how to prepare the series. Seasonality is a form of non-stationarity: it is removed with a <b>seasonal difference</b> Δ₇yₜ = yₜ − yₜ₋₇.</p>
+    ${o.acf0 ? corrChart(o.acf0.vals, o.acf0.bands, 'ACF of y') : ''}
+    <div class="actions"><button class="btn small" id="tsaAcf0" ${o.acf0 ? 'disabled' : ''}>📉 Ask the agent: ACF of y for 28 lags (look for weekly spikes)</button></div>
+    <h4 class="tsa-q">Your decision: apply…</h4>${tsaOptions('dec', [['none', 'No transformation: it is already stationary (d = 0)'], ['d1', 'First-order differencing: Δyₜ = yₜ − yₜ₋₁ (d = 1)'], ['d2', 'Second-order differencing: Δ²yₜ (d = 2)'], ['D1', 'Seasonal differencing: Δ₇yₜ = yₜ − yₜ₋₇ (D = 1)'], ['d1D1', 'Both: seasonal and first-order differencing (d = 1, D = 1)'], ['log', 'Log transform only: log(yₜ), to stabilise variance']])}`;
   if (n === 4) return `${tsaSeriesChart(tsaSeries(), tsaLabel())}
-    ${o.adfT ? adfBlock(o.adfT, tsaLabel()) : ''}
-    <div class="actions"><button class="btn small" id="tsaAdfT" ${o.adfT ? 'disabled' : ''}>🧪 Ask the agent: run the ADF test on ${esc(tsaLabel())}</button></div>
-    <h4 class="tsa-q">Your decision: the transformed series ${esc(tsaLabel())} is…</h4>${tsaOptions('dec', [['ok', 'Stationary now: continue to the ACF plot'], ['more', `Still non-stationary: apply ${s.d ? 'another' : 'a first-order'} difference`]], !o.adfT)}${o.adfT ? '' : '<p class="small muted">Run the test first.</p>'}`;
+    ${o.adfT ? adfBlock(o.adfT, tsaLabel()) + `<p class="small"><b>Weekly-pattern check on ${esc(tsaLabel())}:</b> ACF at lag 7 = ${o.seasT.r7.toFixed(3)}, at lag 14 = ${o.seasT.r14.toFixed(3)}.</p>` : ''}
+    <div class="actions"><button class="btn small" id="tsaAdfT" ${o.adfT ? 'disabled' : ''}>🧪 Ask the agent: run the ADF test and the weekly-pattern check on ${esc(tsaLabel())}</button></div>
+    <h4 class="tsa-q">Your decision: the transformed series ${esc(tsaLabel())} is…</h4>${tsaOptions('dec', [['ok', 'Stationary now: continue to the ACF plot'], ['more', `Still non-stationary (unit root): apply ${s.d ? 'another' : 'a first-order'} difference`, '', s.d >= 2], ['seas', 'A strong weekly pattern remains: apply a seasonal difference Δ₇', '', s.D >= 1]], !o.adfT)}${o.adfT ? '' : '<p class="small muted">Run the test first.</p>'}`;
   if (n === 5 || n === 6) {
-    const isA = n === 5, c = isA ? o.acf : o.pacf, nm = isA ? 'ACF' : 'PACF', par = isA ? 'q (MA order)' : 'p (AR order)';
-    return `<p>Series: <b>${esc(tsaLabel())}</b> (d = ${s.d}${s.log ? ', log' : ''}). ${isA ? 'The ACF shows the correlation with each lag, including indirect effects. Use it for the MA order q.' : 'The PACF shows the direct effect of each lag after removing the shorter lags. Use it for the AR order p.'}</p>
+    const isA = n === 5, c = isA ? o.acf : o.pacf, nm = isA ? 'ACF' : 'PACF', par = isA ? 'q (MA order)' : 'p (AR order)', spar = isA ? 'Q (seasonal MA order)' : 'P (seasonal AR order)';
+    return `<p>Series: <b>${esc(tsaLabel())}</b> (d = ${s.d}${s.D ? ', D = 1' : ''}${s.log ? ', log' : ''}). ${isA ? 'The ACF shows the correlation with each lag, including indirect effects. Use it for the MA orders.' : 'The PACF shows the direct effect of each lag after removing the shorter lags. Use it for the AR orders.'}${s.D ? ` Read the short lags (1–5) for ${par} and the weekly lags (7, 14, 21) for ${spar}.` : ''}</p>
       ${c ? corrChart(c.vals, c.bands, nm) : ''}
       <div class="actions"><label class="small">Lags <select id="tsaLags" class="tsa-sel">${[10, 20, 30, 40].map(L => `<option ${L === s.lags ? 'selected' : ''}>${L}</option>`).join('')}</select></label><button class="btn small" id="tsaCorr">📉 Ask the agent: plot the ${nm}</button></div>
-      ${c && c.pat.slow ? `<div class="issue med"><span class="ic">▲</span><div><b>Very slow decay.</b>A ${nm} that stays high for many lags usually means the series is still non-stationary.<div class="actions"><button class="btn small" id="tsaBack3">↩ Go back to Step 3</button></div></div></div>` : ''}
-      <h4 class="tsa-q">Your decision: the ${nm}…</h4>${tsaOptions('dec', [['cut', `Cuts off after lag ${lagSelect('tsaCutLag')} → ${par} = that lag`], ['tails', 'Tails off gradually (decays, possibly oscillating)'], ['none', 'Shows no significant spikes (white noise)']], !c)}${c ? '' : `<p class="small muted">Plot the ${nm} first.</p>`}`;
+      ${c && (c.pat.slow || (c.spat && c.spat.slow)) ? `<div class="issue med"><span class="ic">▲</span><div><b>Very slow decay${c.pat.slow ? '' : ' at the weekly lags'}.</b>A ${nm} that stays high for many ${c.pat.slow ? '' : 'weekly '}lags usually means the series is still non-stationary${c.pat.slow ? '' : ' (seasonal difference needed)'}.<div class="actions"><button class="btn small" id="tsaBack3">↩ Go back to Step 3</button></div></div></div>` : ''}
+      <h4 class="tsa-q">Your decision: ${s.D ? 'at the short lags, ' : ''}the ${nm}…</h4>${tsaOptions('dec', [['cut', `Cuts off after lag ${lagSelect('tsaCutLag')} → ${par} = that lag`], ['tails', 'Tails off gradually (decays, possibly oscillating)'], ['none', 'Shows no significant spikes (white noise)']], !c)}
+      ${s.D ? `<h4 class="tsa-q">…and at the weekly lags 7, 14, 21 it shows…</h4>${tsaOptions('sdec', [['cut', `One spike at lag 7 only → ${spar} = 1`], ['tails', 'Spikes at 7, 14, 21… that decay gradually'], ['none', `No significant weekly spikes → ${spar} = 0`]], !c)}` : ''}${c ? '' : `<p class="small muted">Plot the ${nm} first.</p>`}`;
   }
   if (n === 7) {
-    const da = s.dec.acf || {}, dp = s.dec.pacf || {}, both = da.type === 'tails' && dp.type === 'tails';
+    const da = s.dec.acf || {}, dp = s.dec.pacf || {}, both = da.type === 'tails' && dp.type === 'tails', sboth = da.stype === 'tails' && dp.stype === 'tails';
     const p0 = dp.type === 'cut' ? dp.lag : both ? 1 : 0, q0 = da.type === 'cut' ? da.lag : both ? 1 : 0;
-    const sel = (id, v, max) => `<select id="${id}" class="tsa-sel">${Array.from({length: max + 1}, (_, i) => `<option ${i === v ? 'selected' : ''}>${i}</option>`).join('')}</select>`;
-    const row = (k, on, p, q) => `<tr><td><label><input type="checkbox" id="tsaUse${k}" ${on ? 'checked' : ''} ${k === 1 ? 'disabled' : ''}> Model ${k}${k === 1 ? ' (your identified model)' : ''}</label></td><td>ARIMA( ${sel('tsaP' + k, p, 3)} , ${sel('tsaD' + k, s.d, 2)} , ${sel('tsaQ' + k, q, 3)} )</td></tr>`;
-    return `<p>From your readings: PACF ${dp.type === 'cut' ? `cuts off after lag ${dp.lag}` : dp.type === 'tails' ? 'tails off' : 'has no spikes'}, ACF ${da.type === 'cut' ? `cuts off after lag ${da.lag}` : da.type === 'tails' ? 'tails off' : 'has no spikes'}, d = ${s.d}${s.log ? ' on log(y)' : ''}. Specify up to three candidates. The agent fits each on the first ${TS_N - TS_TEST} days (training set) and forecasts the last ${TS_TEST} days (test set).</p>
-      <table class="tbl ex" style="max-width:560px"><tbody>${row(1, true, p0, q0)}${row(2, false, p0 ? p0 - 1 : 1, q0 ? q0 : 1)}${row(3, false, Math.min(3, p0 + 1), q0)}</tbody></table>
+    const P0 = s.D ? (dp.stype === 'cut' || sboth ? 1 : 0) : 0, Q0 = s.D ? (da.stype === 'cut' || sboth ? 1 : 0) : 0;
+    const famSel = (k, f) => `<select id="tsaF${k}" class="tsa-sel tsa-fam" data-k="${k}" ${k === 1 ? 'disabled' : ''}>${Object.entries(TS_FAMS).map(([v, l]) => `<option value="${v}" ${v === f ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>`;
+    const row = (k, on, f, p, q, P, Q, D) => `<tr><td><label><input type="checkbox" id="tsaUse${k}" ${on ? 'checked' : ''} ${k === 1 ? 'disabled' : ''}> Model ${k}${k === 1 ? ' (your identified model)' : ''}</label></td><td>${famSel(k, f)}</td>
+      <td style="white-space:nowrap"><span id="tsaAR${k}" ${f === 'arima' ? '' : 'hidden'}>( ${tsaSel('tsaP' + k, p, 3)} , ${tsaSel('tsaD' + k, s.d, 2)} , ${tsaSel('tsaQ' + k, q, 3)} ) ( ${tsaSel('tsaSP' + k, P, 2)} , ${tsaSel('tsaSD' + k, D, 1)} , ${tsaSel('tsaSQ' + k, Q, 2)} )₇</span><span id="tsaMA${k}" ${f === 'ma' ? '' : 'hidden'}>window <select id="tsaW${k}" class="tsa-sel">${[3, 7, 14, 28].map(w => `<option ${w === 7 ? 'selected' : ''}>${w}</option>`).join('')}</select> days</span><span id="tsaNo${k}" class="small muted" ${['ses', 'holt', 'hwa', 'hwm'].includes(f) ? '' : 'hidden'}>smoothing constants estimated on the training data</span><span id="tsaNone${k}" class="small muted" ${f === 'naive' || f === 'snaive' ? '' : 'hidden'}>no parameters: repeats past values</span></td></tr>`;
+    return `<p>From your readings: PACF ${dp.type === 'cut' ? `cuts off after lag ${dp.lag}` : dp.type === 'tails' ? 'tails off' : 'has no spikes'}, ACF ${da.type === 'cut' ? `cuts off after lag ${da.lag}` : da.type === 'tails' ? 'tails off' : 'has no spikes'}${s.D ? `; weekly lags: PACF ${corrRead({type: dp.stype}, true)}, ACF ${corrRead({type: da.stype}, true)}` : ''}; d = ${s.d}${s.D ? ', D = 1' : ''}${s.log ? ' on log(y)' : ''}. Specify up to four candidates from any model family: ARIMA/SARIMA (the second bracket holds the weekly orders P, D, Q), naïve benchmarks, a moving average or exponential smoothing. The agent fits each on the first ${TS_N - TS_TEST} days (training set) and forecasts the last ${TS_TEST} days (test set).</p>
+      <div class="scroll-x"><table class="tbl ex"><thead><tr><th></th><th>Family</th><th>Orders / settings</th></tr></thead><tbody>${row(1, true, 'arima', p0, q0, P0, Q0, s.D)}${row(2, false, 'arima', p0 ? p0 - 1 : 1, q0 ? q0 : 1, P0, Q0, s.D)}${row(3, false, s.D ? 'hwa' : 'holt', 0, 0, 0, 0, 0)}${row(4, false, s.D ? 'snaive' : 'naive', 0, 0, 0, 0, 0)}</tbody></table></div>
       <div class="actions"><button class="btn primary" id="tsaFit">⚙ Ask the agent: fit the selected models</button></div>
       ${s.fits ? tsaFitsHTML() + '<div class="actions"><button class="btn primary" id="tsaTo8">Continue to Step 8 →</button></div>' : ''}`;
   }
-  if (n === 8) return `${tsaFitsHTML()}<h4 class="tsa-q">Your decision: which model will you use to forecast?</h4>${tsaOptions('dec', s.fits.map((f, i) => [String(i), `<b>${f.label}</b> · AIC ${n2(f.aic)} · MAPE ${f.mape.toFixed(2)}%`]))}
+  if (n === 8) return `${tsaFitsHTML()}<h4 class="tsa-q">Your decision: which model will you use to forecast?</h4>${tsaOptions('dec', s.fits.map((f, i) => [String(i), `<b>${f.label}</b>${isFinite(f.aic) ? ` · AIC ${n2(f.aic)}` : ''} · MAPE ${f.mape.toFixed(2)}%`]))}
     <div class="small" style="margin-top:6px">Main reason: <select id="tsaReason" class="tsa-sel"><option value="mape">Lowest error on the test set (MAPE/RMSE)</option><option value="aic">Lowest AIC/BIC (fit vs complexity)</option><option value="simple">Simplest model with similar accuracy</option></select></div>`;
   return '';
 }
+const TSA_COLORS = ['var(--you)', 'var(--ai)', 'var(--s3)', 'var(--s5)'];
 function tsaFitsHTML() {
   const s = state.tsa, f = s.fits; if (!f) return '';
   const y = tsaY(), from = TS_N - 90, x = Array.from({length: 90}, (_, i) => from + i + 1);
-  const series = [{name: 'Actual', color: 'var(--ink)', values: y.slice(from)}, ...f.map((m, i) => ({name: m.label, color: ['var(--you)', 'var(--ai)', 'var(--s3)'][i], values: x.map(d => (d > TS_N - TS_TEST ? m.fc[d - (TS_N - TS_TEST) - 1] : NaN))}))];
-  const bestA = f.reduce((a, b) => (b.aic < a.aic ? b : a)), bestM = f.reduce((a, b) => (b.mape < a.mape ? b : a));
+  const series = [{name: 'Actual', color: 'var(--ink)', values: y.slice(from)}, ...f.map((m, i) => ({name: m.label, color: TSA_COLORS[i], values: x.map(d => (d > TS_N - TS_TEST ? m.fc[d - (TS_N - TS_TEST) - 1] : NaN))}))];
+  const withA = f.filter(m => isFinite(m.aic)), bestA = withA.length ? withA.reduce((a, b) => (b.aic < a.aic ? b : a)) : null, bestM = f.reduce((a, b) => (b.mape < a.mape ? b : a));
+  const num = v => (isFinite(v) ? n2(v) : '—');
   return `<div class="scroll-x"><table class="tbl"><thead><tr><th>Model</th><th>Parameters (estimated on training data)</th><th class="n">AIC</th><th class="n">BIC</th><th class="n">RMSE</th><th class="n">MAE</th><th class="n">MAPE</th></tr></thead><tbody>
-    ${f.map(m => `<tr><td><b>${m.label}</b></td><td class="small mono">c=${n2(m.fit.mu)}${m.fit.phi.map((v, i) => ` φ${i + 1}=${n2(v)}`).join('')}${m.fit.theta.map((v, i) => ` θ${i + 1}=${n2(v)}`).join('')} σ²=${n2(m.fit.sigma2)}</td><td class="n ${m === bestA ? 'up' : ''}">${n2(m.aic)}</td><td class="n">${n2(m.bic)}</td><td class="n">${n2(m.rmse)}</td><td class="n">${n2(m.mae)}</td><td class="n ${m === bestM ? 'up' : ''}">${m.mape.toFixed(2)}%</td></tr>`).join('')}</tbody></table></div>
-    <p class="small muted">Estimated by conditional least squares with a constant. AIC/BIC are comparable only between models with the same d (and scale); MAPE/RMSE on the 30-day test set are comparable across all models.</p>
+    ${f.map(m => `<tr><td><b>${m.label}</b></td><td class="small mono">${esc(m.params)}</td><td class="n ${m === bestA ? 'up' : ''}">${num(m.aic)}</td><td class="n">${num(m.bic)}</td><td class="n">${n2(m.rmse)}</td><td class="n">${n2(m.mae)}</td><td class="n ${m === bestM ? 'up' : ''}">${m.mape.toFixed(2)}%</td></tr>`).join('')}</tbody></table></div>
+    <p class="small muted">ARIMA/SARIMA: conditional least squares with a constant (no constant when d + D ≥ 2). Smoothing models: constants chosen to minimise one-step errors. Naïve, seasonal naïve and moving average have no estimated parameters, so no AIC. AIC/BIC compare models only on the same scale and differencing (same d and D); MAPE/RMSE on the ${TS_TEST}-day test set compare every model.</p>
     ${legend(series.map(z => [z.name, z.color, 'line']))}${lineChart({x, series, xLabel: 'Day', yLabel: tsaUnit(), autoY: true, shade: [{from: TS_N - TS_TEST, to: TS_N, label: 'Test period'}]})}`;
 }
 function tsaSubmit() {
-  const s = state.tsa, o = s.out, v = ($('input[name=dec]:checked') || {}).value;
+  const s = state.tsa, o = s.out, v = ($('input[name=dec]:checked') || {}).value, seasonal = tsaSeasonal(), [, td] = TS_SETS[s.ds].truth;
   if (v === undefined) { $('#tsaErr').textContent = 'Choose an option first.'; return; }
-  const stationaryTruth = TS_SETS[s.ds].truth[1] === 0;
   if (s.step === 1) {
     s.dec.eye = v;
-    const ok = stationaryTruth ? v === 'stat' : v === 'trend';
-    tsaSay(`You judged the series ${v === 'stat' ? 'stationary' : v === 'trend' ? 'non-stationary (trend / wandering level)' : 'non-stationary (changing variance)'}.`, 'you');
-    tsaGrade(1, ok, ok ? (stationaryTruth ? '✓ Consistent with the plot: the series moves around a stable level with steady spread.' : '✓ Consistent with the plot: the level drifts, so the mean is not constant.')
-      : v === 'var' ? '✗ The spread looks roughly constant here. The issue to check is whether the level (mean) stays stable. The rolling mean helps.' : stationaryTruth ? '✗ Look again: the series keeps returning to the same level, and the rolling mean is flat.' : '✗ Look again: the level drifts over the year, so the mean is not constant (see the rolling mean).');
+    const want = seasonal ? TS_SETS[s.ds].look : td === 0 ? ['stat'] : ['trend'], ok = want.includes(v);
+    const said = {stat: 'stationary', trend: 'non-stationary (trend / wandering level)', seas: 'non-stationary (weekly pattern)', trendseas: 'non-stationary (trend and weekly pattern)', var: 'non-stationary (changing variance)'}[v];
+    tsaSay(`You judged the series ${said}.`, 'you');
+    tsaGrade(1, ok, ok ? (seasonal ? '✓ Consistent with the plot: the same weekday pattern repeats every 7 days, so the mean depends on the day of the week.' + (want.length === 1 ? ' The level also grows over the year.' : '') : td === 0 ? '✓ Consistent with the plot: the series moves around a stable level with steady spread.' : '✓ Consistent with the plot: the level drifts, so the mean is not constant.')
+      : seasonal ? (v === 'seas' ? '✗ The weekly pattern is there, but look at the level too: it grows over the year (see the rolling mean).' : '✗ Look again: the series repeats a weekly pattern (see the average by weekday). Seasonality makes a series non-stationary.')
+      : v === 'var' ? '✗ The spread looks roughly constant here. The issue to check is whether the level (mean) stays stable. The rolling mean helps.'
+      : v === 'seas' || v === 'trendseas' ? '✗ There is no repeating weekly pattern here: the weekday averages are almost the same.' + (td ? ' The issue is the drifting level.' : '')
+      : td === 0 ? '✗ Look again: the series keeps returning to the same level, and the rolling mean is flat.' : '✗ Look again: the level drifts over the year, so the mean is not constant (see the rolling mean).');
     s.step = 2;
   } else if (s.step === 2) {
     s.dec.adf = v; const stat = o.adf0.p <= 0.05, ok = (v === 'stat') === stat;
     tsaSay(`You concluded: ${v === 'stat' ? 'stationary' : 'non-stationary'}.`, 'you');
-    tsaGrade(2, ok, `${ok ? '✓' : '✗'} p = ${fmtP(o.adf0.p)} ${stat ? '≤' : '>'} 0.05, so we ${stat ? 'reject' : 'cannot reject'} the unit-root null: the series is ${stat ? 'stationary' : 'non-stationary'}${stat ? '' : ' and needs a transformation'}.`);
+    tsaGrade(2, ok, `${ok ? '✓' : '✗'} p = ${fmtP(o.adf0.p)} ${stat ? '≤' : '>'} 0.05, so we ${stat ? 'reject' : 'cannot reject'} the unit-root null: the series is ${stat ? 'stationary' : 'non-stationary'}${stat ? '' : ' and needs a transformation'}.${seasonal && stat ? ' Note: the ADF test looks for a unit root, not for seasonality; check the weekly pattern too.' : ''}`);
     s.step = 3;
   } else if (s.step === 3) {
-    s.dec.transform = v; const need = o.adf0.p > 0.05 ? 'd1' : 'none', ok = v === need;
-    s.log = v === 'log'; s.d = v === 'd1' ? 1 : v === 'd2' ? 2 : 0;
-    tsaSay(`You applied: ${({none: 'no transformation', d1: 'first-order differencing', d2: 'second-order differencing', log: 'a log transform'})[v]}.`, 'you');
-    tsaGrade(3, ok, ok ? (need === 'none' ? '✓ The ADF test already shows stationarity, so no differencing is needed (d = 0).' : '✓ First-order differencing removes a stochastic trend (unit root); it is the standard first step.')
+    s.dec.transform = v; const need = seasonal ? 'D1' : o.adf0.p > 0.05 ? 'd1' : 'none', ok = v === need;
+    s.log = v === 'log'; s.d = v === 'd1' || v === 'd1D1' ? 1 : v === 'd2' ? 2 : 0; s.D = v === 'D1' || v === 'd1D1' ? 1 : 0;
+    tsaSay(`You applied: ${({none: 'no transformation', d1: 'first-order differencing', d2: 'second-order differencing', D1: 'seasonal differencing (lag 7)', d1D1: 'seasonal and first-order differencing', log: 'a log transform'})[v]}.`, 'you');
+    tsaGrade(3, ok, ok ? (need === 'none' ? '✓ The ADF test already shows stationarity and there is no weekly pattern, so no differencing is needed (d = 0).' : need === 'D1' ? '✓ The seasonal difference Δ₇ removes the repeating weekly pattern. Re-test it before adding a regular difference.' : '✓ First-order differencing removes a stochastic trend (unit root); it is the standard first step.')
+      : seasonal ? (v === 'd1D1' ? '✗ Start with the seasonal difference alone and re-test. Adding a regular difference as well can over-difference; Step 4 lets you add one if the test still fails.' : v === 'd1' || v === 'd2' ? '✗ A regular difference removes a trend but leaves the weekly pattern (see the ACF at lags 7, 14, 21). Use a seasonal difference Δ₇.' : v === 'log' ? '✗ A log transform stabilises the variance but leaves the weekly pattern. Use a seasonal difference Δ₇.' : '✗ The series has a repeating weekly pattern, so it is not stationary. Use a seasonal difference Δ₇.')
+      : v === 'D1' || v === 'd1D1' ? '✗ There is no repeating weekly pattern (the ACF has no spikes at lags 7, 14, 21), so a seasonal difference only adds noise.'
       : v === 'd2' ? '✗ Over-differencing: start with one difference and re-test. Differencing twice can introduce artificial negative correlation and inflate variance.'
       : v === 'log' ? '✗ A log transform stabilises a growing variance but does not remove a trend or unit root. Re-test, then difference if needed.'
       : v === 'none' ? '✗ The ADF test could not reject non-stationarity, so the series needs differencing before ARIMA.' : '✗ The ADF test shows the series is already stationary; differencing it would over-difference.');
     s.out.adfT = null; s.step = 4;
   } else if (s.step === 4) {
-    const statNow = o.adfT.p <= 0.05;
-    if (v === 'more') {
-      tsaSay(`You applied another difference (d = ${s.d + 1}).`, 'you');
-      tsaGrade(4, !statNow, statNow ? `✗ ${tsaLabel()} was already stationary (p = ${fmtP(o.adfT.p)}): differencing again over-differences.` : `✓ ${tsaLabel()} was still non-stationary (p = ${fmtP(o.adfT.p)}), so another difference is justified.`);
-      s.d = Math.min(2, s.d + 1); s.out.adfT = null; return render();
+    const unit = o.adfT.p > 0.05, seasLeft = o.seasT.strong, statNow = !unit && !seasLeft;
+    if (v === 'more' || v === 'seas') {
+      const okM = v === 'seas' ? seasLeft : unit && !seasLeft;
+      tsaSay(v === 'seas' ? 'You applied a seasonal difference Δ₇.' : `You applied another difference (d = ${s.d + 1}).`, 'you');
+      tsaGrade(4, okM, okM ? (v === 'seas' ? `✓ ${tsaLabel()} still had a strong weekly pattern (ACF at lag 7 = ${o.seasT.r7.toFixed(2)}), so a seasonal difference is justified.` : `✓ ${tsaLabel()} was still non-stationary (p = ${fmtP(o.adfT.p)}), so another difference is justified.`)
+        : statNow ? `✗ ${tsaLabel()} was already stationary (p = ${fmtP(o.adfT.p)}, no strong weekly pattern): differencing again over-differences.` : seasLeft ? `✗ The problem left in ${tsaLabel()} is the weekly pattern (ACF at lag 7 = ${o.seasT.r7.toFixed(2)}). A seasonal difference fixes it; a regular one does not.` : `✗ The ADF test still finds a unit root (p = ${fmtP(o.adfT.p)}) and there is no strong weekly pattern: a regular difference is the fix.`);
+      if (v === 'seas') s.D = 1; else s.d = Math.min(2, s.d + 1);
+      s.out.adfT = null; return render();
     }
-    tsaSay(`You confirmed ${tsaLabel()} is stationary and moved on (d = ${s.d}).`, 'you');
-    tsaGrade(4, statNow, statNow ? `✓ p = ${fmtP(o.adfT.p)} ≤ 0.05: ${tsaLabel()} is stationary. d = ${s.d}.` : `✗ p = ${fmtP(o.adfT.p)} > 0.05: ${tsaLabel()} is still non-stationary. ARIMA identification on it will be unreliable.`);
+    tsaSay(`You confirmed ${tsaLabel()} is stationary and moved on (d = ${s.d}${s.D ? ', D = 1' : ''}).`, 'you');
+    tsaGrade(4, statNow, statNow ? `✓ p = ${fmtP(o.adfT.p)} ≤ 0.05 and no strong weekly pattern: ${tsaLabel()} is stationary. d = ${s.d}${s.D ? ', D = 1' : ''}.` : unit ? `✗ p = ${fmtP(o.adfT.p)} > 0.05: ${tsaLabel()} is still non-stationary. ARIMA identification on it will be unreliable.` : `✗ The ADF test passes, but a strong weekly pattern remains (ACF at lag 7 = ${o.seasT.r7.toFixed(2)}, lag 14 = ${o.seasT.r14.toFixed(2)}). The series is not stationary until the seasonality is removed.`);
     s.step = 5;
   } else if (s.step === 5 || s.step === 6) {
     const isA = s.step === 5, c = isA ? o.acf : o.pacf, lag = +($('#tsaCutLag') || {value: 1}).value, nm = isA ? 'ACF' : 'PACF';
-    const dec = {type: v, lag: v === 'cut' ? lag : 0}; s.dec[isA ? 'acf' : 'pacf'] = dec;
-    const ok = c.pat.ok.some(r => r.type === v && (v !== 'cut' || r.lag === lag));
-    const read = r => (r.type === 'cut' ? `cuts off after lag ${r.lag}` : r.type === 'tails' ? 'tails off gradually' : 'has no significant spikes');
-    tsaSay(`You read the ${nm} as: ${read(dec)}.`, 'you');
-    tsaGrade(s.step, ok, `${ok ? '✓' : '✗'} The agent reads the ${nm} (significant lags: ${c.pat.sig.map((x, i) => (x ? i + 1 : null)).filter(Boolean).slice(0, 8).join(', ') || 'none'}) as: ${c.pat.ok.map(read).join(', or ')}.${!ok && v === 'cut' ? ` After lag ${lag} the spikes ${c.pat.lead > lag ? 'are still significant' : 'were already inside the band'}.` : ''} ${isA ? 'Rule: an ACF that cuts off after q suggests MA(q).' : 'Rule: a PACF that cuts off after p suggests AR(p).'}`);
+    const sv = s.D ? ($('input[name=sdec]:checked') || {}).value : undefined;
+    if (s.D && sv === undefined) { $('#tsaErr').textContent = 'Also choose what you see at the weekly lags.'; return; }
+    const dec = {type: v, lag: v === 'cut' ? lag : 0, stype: sv}; s.dec[isA ? 'acf' : 'pacf'] = dec;
+    const okN = c.pat.ok.some(r => r.type === v && (v !== 'cut' || r.lag === lag)), okS = !s.D || c.spat.ok.some(r => r.type === sv), ok = okN && okS;
+    tsaSay(`You read the ${nm} as: ${corrRead(dec)}${s.D ? `; weekly lags: ${corrRead({type: sv}, true)}` : ''}.`, 'you');
+    const sigList = c.pat.sig.map((x, i) => (x ? i + 1 : null)).filter(Boolean).slice(0, 8).join(', ') || 'none';
+    tsaGrade(s.step, ok, `${ok ? '✓' : '✗'} The agent reads the ${nm} (significant short lags: ${sigList}) as: ${c.pat.ok.map(r => corrRead(r)).join(', or ')}.${!okN && v === 'cut' ? ` After lag ${lag} the spikes ${c.pat.lead > lag ? 'are still significant' : 'were already inside the band'}.` : ''}${s.D ? ` At the weekly lags (7, 14, 21: ${c.spat.vals.map(x => (isFinite(x) ? x.toFixed(2) : '–')).join(', ')}) it reads: ${c.spat.ok.map(r => corrRead(r, true)).join(', or ')}.` : ''} ${isA ? `Rule: an ACF that cuts off after q suggests MA(q)${s.D ? '; one spike at lag 7 suggests a seasonal MA, Q = 1' : ''}.` : `Rule: a PACF that cuts off after p suggests AR(p)${s.D ? '; one spike at lag 7 suggests a seasonal AR, P = 1' : ''}.`}`);
     s.step += 1;
   } else if (s.step === 8) {
     const ch = s.fits[+v], reason = $('#tsaReason').value;
@@ -3134,33 +3257,39 @@ function tsaSubmit() {
   render();
 }
 function tsaFinish(idx, reason) {
-  const s = state.tsa, y = tsaY(), [tp, td, tq] = TS_SETS[s.ds].truth, ch = s.fits[idx], m1 = s.fits[0];
-  const truth = tsEvaluate(y, tp, td, tq), bench = tsBenchmark(y);
+  const s = state.tsa, y = tsaY(), [tp, td, tq] = TS_SETS[s.ds].truth, [tP, tD, tQ] = tsSeas(s.ds), tl = tsTruthLabel(s.ds), ch = s.fits[idx], m1 = s.fits[0];
+  const truth = tsEvaluate(y, tp, td, tq, false, tP, tD, tQ), bench = tsBenchmark(y);
   const bestM = s.fits.reduce((a, b) => (b.mape < a.mape ? b : a));
-  const okChoice = ch === bestM || (ch.mape <= bestM.mape + 0.25 && (ch.aic <= bestM.aic || ch.p + ch.q < bestM.p + bestM.q));
-  const exact = m1.p === tp && m1.d === td && m1.q === tq && !m1.log, close = !exact && m1.d === td && !m1.log && m1.mape <= truth.mape * 1.02;
-  s.grades[7] = {ok: exact || close, text: exact ? `✓ Your identified model ARIMA(${tp},${td},${tq}) matches the process that generated the data.` : close ? `✓ Your model ${m1.label} is not the generating process ARIMA(${tp},${td},${tq}), but it forecasts as well (MAPE ${m1.mape.toFixed(2)}% vs ${truth.mape.toFixed(2)}%).` : `✗ The data came from ARIMA(${tp},${td},${tq}). Your model ${m1.label} ${m1.d !== td ? `used d = ${m1.d} instead of d = ${td}` : `missed the AR/MA orders`} and forecasts worse (MAPE ${m1.mape.toFixed(2)}% vs ${truth.mape.toFixed(2)}%).`};
+  const okChoice = ch === bestM || (ch.mape <= bestM.mape + 0.25 && (ch.k < bestM.k || ch.aic <= bestM.aic));
+  const exact = m1.p === tp && m1.d === td && m1.q === tq && m1.P === tP && m1.D === tD && m1.Q === tQ && !m1.log, close = !exact && m1.d === td && m1.D === tD && !m1.log && m1.mape <= truth.mape * 1.02;
+  s.grades[7] = {ok: exact || close, text: exact ? `✓ Your identified model ${tl} matches the process that generated the data.` : close ? `✓ Your model ${m1.label} is not the generating process ${tl}, but it forecasts as well (MAPE ${m1.mape.toFixed(2)}% vs ${truth.mape.toFixed(2)}%).` : `✗ The data came from ${tl}. Your model ${m1.label} ${m1.d !== td ? `used d = ${m1.d} instead of d = ${td}` : m1.D !== tD ? `used D = ${m1.D} instead of D = ${tD}` : 'missed the AR/MA orders'} and forecasts ${m1.mape > truth.mape ? 'worse' : 'differently'} (MAPE ${m1.mape.toFixed(2)}% vs ${truth.mape.toFixed(2)}%).`};
   s.grades[8] = {ok: okChoice, text: okChoice ? `✓ Good choice: ${ch.label} has ${ch === bestM ? 'the lowest' : 'near-lowest'} out-of-sample MAPE among your candidates${ch !== bestM ? ' and is simpler or better on AIC' : ''}. For forecasting, the slides' rule gives priority to out-of-sample accuracy.` : `✗ ${bestM.label} forecasts the test period better (MAPE ${bestM.mape.toFixed(2)}% vs ${ch.mape.toFixed(2)}%). For forecasting, prioritise out-of-sample accuracy; use AIC/BIC to break near-ties and prefer the simpler model.`};
   tsaSay(s.grades[7].text, 'verdict', s.grades[7].ok); tsaSay(s.grades[8].text, 'verdict', s.grades[8].ok);
-  const full = arimaFit(y, ch.p, ch.d, ch.q, ch.log), next = arimaForecast(full, 14);
+  const next = tsModel(y, ch.spec).forecast(14);
+  const tour = tsTournament(y, [truth, bench, ...s.fits]);
   const score = Object.values(s.grades).filter(g => g.ok).length;
-  s.final = {idx, reason, truth, bench, next, score, chosen: ch};
+  s.final = {idx, reason, truth, bench, next, score, chosen: ch, tour};
   state.tsaDone = state.tsaDone || [];
-  state.tsaDone.push({name: TS_SETS[s.ds].name, mystery: s.mystery, seed: s.seed, truth: TS_SETS[s.ds].truth, score, chosen: ch.label, mape: ch.mape, bench: bench.label, benchMape: bench.mape, grades: JSON.parse(JSON.stringify(s.grades)), time: new Date()});
+  state.tsaDone.push({name: TS_SETS[s.ds].name, mystery: s.mystery, seed: s.seed, truth: tl, score, chosen: ch.label, mape: ch.mape, bench: bench.label, benchMape: bench.mape, best: tour[0].label, bestMape: tour[0].mape, grades: JSON.parse(JSON.stringify(s.grades)), time: new Date()});
   s.step = 9;
-  tsaSay(`Done. Score ${score}/8. The data came from ARIMA(${tp},${td},${tq}). The automatic AIC search picks ${bench.label} (MAPE ${bench.mape.toFixed(2)}%); your chosen model has MAPE ${ch.mape.toFixed(2)}%.`);
+  tsaSay(`Done. Score ${score}/8. The data came from ${tl}. The automatic AIC search picks ${bench.label} (MAPE ${bench.mape.toFixed(2)}%); across all model families the best test MAPE is ${tour[0].label} (${tour[0].mape.toFixed(2)}%); your chosen model has MAPE ${ch.mape.toFixed(2)}%.`);
   logActivity({short: 'Time series'}, `Lab finished: ${score}/8, chose ${ch.label}`);
   render();
 }
 function tsaFinalHTML() {
-  const s = state.tsa, f = s.final, [tp, td, tq] = TS_SETS[s.ds].truth;
-  const rows = [['Your chosen model', f.chosen], ['Your identified model (Model 1)', s.fits[0]], [`True process: ARIMA(${tp},${td},${tq})`, f.truth], [`Automatic search (lowest AIC, p,q ≤ 3): ${f.bench.label}`, f.bench]];
-  return `<div class="callout"><b>Debrief.</b> ${s.mystery ? `The mystery series was <b>${esc(TS_SETS[s.ds].name)}</b>. ` : ''}It was generated by <b>ARIMA(${tp},${td},${tq})</b>. You scored <b>${f.score}/8</b> on your decisions, and your chosen model's test MAPE is <b>${f.chosen.mape.toFixed(2)}%</b> (automatic AIC search: ${f.bench.mape.toFixed(2)}%).</div>
-    <div class="scroll-x"><table class="tbl"><thead><tr><th>Model</th><th></th><th class="n">AIC</th><th class="n">RMSE</th><th class="n">MAPE</th></tr></thead><tbody>${rows.map(([k, m]) => `<tr><td>${esc(k)}</td><td><b>${m.label}</b></td><td class="n">${n2(m.aic)}</td><td class="n">${n2(m.rmse)}</td><td class="n">${m.mape.toFixed(2)}%</td></tr>`).join('')}</tbody></table></div>
+  const s = state.tsa, f = s.final, tl = tsTruthLabel(s.ds);
+  const rows = [['Your chosen model', f.chosen], ['Your identified model (Model 1)', s.fits[0]], [`True process: ${tl}`, f.truth], [`Automatic search (lowest AIC): ${f.bench.label}`, f.bench]];
+  const num = v => (isFinite(v) ? n2(v) : '—');
+  const tag = r => [r.label === f.chosen.label ? '<span class="pill">your choice</span>' : '', r.label === f.truth.label ? '<span class="pill">true process</span>' : '', r.auto ? '<span class="pill">auto AIC</span>' : ''].join(' ');
+  return `<div class="callout"><b>Debrief.</b> ${s.mystery ? `The mystery series was <b>${esc(TS_SETS[s.ds].name)}</b>. ` : ''}It was generated by <b>${tl}</b>. You scored <b>${f.score}/8</b> on your decisions, and your chosen model's test MAPE is <b>${f.chosen.mape.toFixed(2)}%</b> (automatic AIC search: ${f.bench.mape.toFixed(2)}%; best of all families: ${esc(f.tour[0].label)}, ${f.tour[0].mape.toFixed(2)}%).</div>
+    <div class="scroll-x"><table class="tbl"><thead><tr><th>Model</th><th></th><th class="n">AIC</th><th class="n">RMSE</th><th class="n">MAPE</th></tr></thead><tbody>${rows.map(([k, m]) => `<tr><td>${esc(k)}</td><td><b>${m.label}</b></td><td class="n">${num(m.aic)}</td><td class="n">${n2(m.rmse)}</td><td class="n">${m.mape.toFixed(2)}%</td></tr>`).join('')}</tbody></table></div>
+    <h4 class="tsa-q">Model tournament: every family on the same ${TS_TEST}-day test set</h4>
+    <div class="scroll-x"><table class="tbl" id="tsaTour"><thead><tr><th>#</th><th>Model</th><th>Family</th><th class="n">Parameters</th><th class="n">RMSE</th><th class="n">MAPE</th><th></th></tr></thead><tbody>${f.tour.map((r, i) => `<tr><td>${i + 1}</td><td><b>${r.label}</b></td><td class="small">${esc(TS_FAMS[r.fam])}</td><td class="n">${r.k}</td><td class="n">${n2(r.rmse)}</td><td class="n ${i === 0 ? 'up' : ''}">${r.mape.toFixed(2)}%</td><td>${tag(r)}</td></tr>`).join('')}</tbody></table></div>
+    <p class="small muted">The agent ran the naïve, seasonal naïve, moving-average and exponential-smoothing benchmarks for you. A simple benchmark that comes close to ARIMA/SARIMA is a warning sign that the extra complexity is not paying off.</p>
     <h4 class="tsa-q">Scorecard</h4><table class="tbl ex"><tbody>${TSA_STEPS.map((t, i) => { const g = s.grades[i + 1]; return `<tr><td>${i + 1}. ${t}</td><td class="${g && g.ok ? 'up' : 'down'}">${g ? (g.ok ? '✓' : '✗') : '–'}</td><td class="small">${g ? esc(g.text.replace(/^[✓✗] /, '')) : ''}</td></tr>`; }).join('')}</tbody></table>
-    <h4 class="tsa-q">Lessons</h4><ul class="clean small"><li>ARIMA needs a stationary series: constant mean and variance, only white noise left in the residuals.</li><li>Use the ADF test (H₀: unit root). If p &gt; 0.05, difference once and re-test; avoid over-differencing.</li><li>PACF cutting off after p → AR(p); ACF cutting off after q → MA(q); both tailing off → ARMA(p,q).</li><li>An automatic AIC search often picks a bigger model with almost the same test accuracy. In operations, prefer the simpler model unless the extra complexity pays off.</li><li>For forecasting, judge models on held-out data (MAPE/RMSE). Use AIC/BIC to compare fit vs complexity among models with the same d.</li></ul>
+    <h4 class="tsa-q">Lessons</h4><ul class="clean small"><li>ARIMA needs a stationary series: constant mean and variance, only white noise left in the residuals. Trend and seasonality both break stationarity.</li><li>Use the ADF test (H₀: unit root). If p &gt; 0.05, difference once and re-test; avoid over-differencing. The ADF test does not detect seasonality: check the weekday pattern and the ACF at lags 7, 14, 21.</li><li>A repeating weekly pattern is removed with a seasonal difference Δ₇ (D = 1); add a regular difference only if a unit root remains.</li><li>PACF cutting off after p → AR(p); ACF cutting off after q → MA(q); both tailing off → ARMA(p,q). The same rules at lags 7, 14, 21 give the seasonal orders P and Q of SARIMA(p,d,q)(P,D,Q)₇.</li><li>Exponential smoothing is the other main family: SES for level only, Holt for level + trend, Holt-Winters for level + trend + seasonality (additive when the weekly swing is constant, multiplicative when it grows with the level).</li><li>Always compare against naïve and seasonal naïve benchmarks. For forecasting, judge models on held-out data (MAPE/RMSE); use AIC/BIC to compare fit vs complexity among models on the same scale.</li></ul>
     <h4 class="tsa-q">Next 14 days with ${f.chosen.label} (refitted on all ${TS_N} days)</h4>
-    <div class="scroll-x"><table class="tbl ex"><thead><tr>${f.next.map((_, i) => `<th>${tsDate(TS_N + i).slice(5)}</th>`).join('')}</tr></thead><tbody><tr>${f.next.map(v => `<td class="n">${n1(v)}</td>`).join('')}</tr></tbody></table></div>
+    <div class="scroll-x"><table class="tbl ex"><thead><tr>${f.next.map((_, i) => `<th>${TS_DOW[tsDow(TS_N + i)]} ${tsDate(TS_N + i).slice(5)}</th>`).join('')}</tr></thead><tbody><tr>${f.next.map(v => `<td class="n">${n1(v)}</td>`).join('')}</tr></tbody></table></div>
     <div class="actions"><button class="btn primary" id="tsaAgain">Try a new sample of this dataset</button><button class="btn" id="tsaMystery">Try a mystery dataset</button></div>`;
 }
 function tsaHTML() {
@@ -3173,20 +3302,22 @@ function tsaHTML() {
     return items.length ? `<details class="exhibit"><summary>Step ${i + 1}: ${esc(t)} ${s.grades[i + 1] ? (s.grades[i + 1].ok ? '<span class="up">✓</span>' : '<span class="down">✗</span>') : ''}</summary>${items.map(h => `<p class="small" style="margin:4px 0">${h.kind === 'you' ? '<b>You:</b> ' : '<b>Agent:</b> '}${esc(h.text)}</p>`).join('')}</details>` : '';
   }).join('');
   return `<section class="card">
-    <div class="thead"><div class="t"><div class="small muted" style="font-weight:700">TOPIC ${TOPICS.length + 1} OF ${TOPICS.length + 1} · STEPWISE LAB</div><h2>Time Series Analysis (ARIMA)</h2><p class="role"><b>Your role:</b> You are the demand planner. Work through the Box–Jenkins steps one decision at a time: visualise, test stationarity, transform, read the ACF and PACF, fit candidate ARIMA models and choose the one to forecast with. The Analytics Agent runs only the analyses you ask for, checks each decision, and waits for your next input.</p></div></div>
+    <div class="thead"><div class="t"><div class="small muted" style="font-weight:700">TOPIC ${TOPICS.length + 1} OF ${TOPICS.length + 1} · STEPWISE LAB</div><h2>Time Series Analysis (ARIMA, SARIMA &amp; smoothing)</h2><p class="role"><b>Your role:</b> You are the demand planner. Work through the Box–Jenkins steps one decision at a time: visualise, test stationarity, remove trend and weekly seasonality, read the ACF and PACF, fit candidate models from every family (ARIMA, SARIMA, naïve benchmarks, moving average, SES, Holt, Holt-Winters) and choose the one to forecast with. The Analytics Agent runs only the analyses you ask for, checks each decision, and waits for your next input.</p></div></div>
     <details class="learn"><summary>Concept &amp; formulas</summary><div class="learn-grid"><div>
       <p><b>Stationarity</b> (required before ARIMA): constant mean, constant variance, and only white noise left in the residuals. Trend and seasonality make a series non-stationary.</p>
-      <p><b>ADF test</b>: H₀ = unit root (non-stationary). p &gt; 0.05 → non-stationary → difference and re-test.</p>
+      <p><b>ADF test</b>: H₀ = unit root (non-stationary). p &gt; 0.05 → non-stationary → difference and re-test. It does not test for seasonality.</p>
+      <p><b>Seasonality</b>: a pattern that repeats every s periods (s = 7 for a weekly pattern in daily data). Remove it with a seasonal difference; read the ACF/PACF at lags s, 2s, 3s for the seasonal orders.</p>
       <p><b>Identification</b>: PACF significant for the first p lags then cuts off, with the ACF decaying → AR(p). ACF significant for the first q lags then cuts off → MA(q). Both decay → ARMA(p,q).</p>
+      <p><b>Which family?</b> Level only: SES or ARIMA(0,1,1). Trend: Holt or ARIMA with d = 1. Trend + seasonality: Holt-Winters or SARIMA. Always compare with naïve / seasonal naïve.</p>
       <p><b>Selection</b>: lower AIC/BIC = better fit vs complexity (BIC penalises parameters more). Lower MAPE/RMSE on held-out data = better forecasts. For forecasting, give out-of-sample accuracy priority; treat an AIC difference above 10 as substantial; prefer the simpler model if accuracy is similar.</p></div>
-      <div class="formula"><div><b>First difference</b>Δyₜ = yₜ − yₜ₋₁</div><div><b>ADF regression</b>Δyₜ = α + γ·yₜ₋₁ + Σ δᵢ·Δyₜ₋ᵢ + εₜ,  H₀: γ = 0</div><div><b>ACF at lag k</b>rₖ = Σ(yₜ−ȳ)(yₜ₊ₖ−ȳ) ÷ Σ(yₜ−ȳ)²</div><div><b>AR(p)</b>yₜ = c + φ₁yₜ₋₁ + … + φₚyₜ₋ₚ + εₜ</div><div><b>MA(q)</b>yₜ = c + εₜ + θ₁εₜ₋₁ + … + θ_qεₜ₋q</div><div><b>ARIMA(p,d,q)</b>ARMA(p,q) on the d-times differenced series</div><div><b>AIC / BIC</b>2k − 2 ln L  /  k ln n − 2 ln L</div><div><b>MAPE</b>(100/n) Σ |yₜ − ŷₜ| ÷ yₜ</div></div></div></details>
+      <div class="formula"><div><b>First difference</b>Δyₜ = yₜ − yₜ₋₁</div><div><b>Seasonal difference</b>Δ₇yₜ = yₜ − yₜ₋₇</div><div><b>ADF regression</b>Δyₜ = α + γ·yₜ₋₁ + Σ δᵢ·Δyₜ₋ᵢ + εₜ,  H₀: γ = 0</div><div><b>ACF at lag k</b>rₖ = Σ(yₜ−ȳ)(yₜ₊ₖ−ȳ) ÷ Σ(yₜ−ȳ)²</div><div><b>AR(p)</b>yₜ = c + φ₁yₜ₋₁ + … + φₚyₜ₋ₚ + εₜ</div><div><b>MA(q)</b>yₜ = c + εₜ + θ₁εₜ₋₁ + … + θ_qεₜ₋q</div><div><b>ARIMA(p,d,q)</b>ARMA(p,q) on the d-times differenced series</div><div><b>SARIMA(p,d,q)(P,D,Q)ₛ</b>φ(B)Φ(Bˢ)(1−B)ᵈ(1−Bˢ)ᴰ yₜ = c + θ(B)Θ(Bˢ) εₜ</div><div><b>SES</b>ℓₜ = αyₜ + (1−α)ℓₜ₋₁,  ŷₜ₊ₕ = ℓₜ</div><div><b>Holt</b>ℓₜ = αyₜ + (1−α)(ℓₜ₋₁+bₜ₋₁),  bₜ = β(ℓₜ−ℓₜ₋₁) + (1−β)bₜ₋₁,  ŷₜ₊ₕ = ℓₜ + h·bₜ</div><div><b>Holt-Winters (additive)</b>ŷₜ₊ₕ = ℓₜ + h·bₜ + sₜ₊ₕ₋ₘ,  sₜ = γ(yₜ−ℓₜ) + (1−γ)sₜ₋ₘ</div><div><b>Moving average</b>ŷ = (yₜ + … + yₜ₋ₖ₊₁) ÷ k</div><div><b>AIC / BIC</b>2k − 2 ln L  /  k ln n − 2 ln L</div><div><b>MAPE</b>(100/n) Σ |yₜ − ŷₜ| ÷ yₜ</div></div></div></details>
   </section>
   <section class="card" id="caseData"><details open><summary class="case-sum"><h3 style="display:inline-flex;margin:0">📋 Case data</h3><span class="small muted"> the full series · click to collapse</span></summary>
     <div class="actions"><select id="tsaDs" class="tsa-sel">${TS_IDS.map(id => `<option value="${id}" ${!s.mystery && s.ds === id ? 'selected' : ''}>${esc(TS_SETS[id].name)}</option>`).join('')}<option value="mystery" ${s.mystery ? 'selected' : ''}>Mystery dataset (process hidden)</option></select><button class="btn small" id="tsaNewSample">🎲 New sample</button><span class="small muted">Changing the dataset restarts the lab.</span></div>
     <p class="case-brief">${s.mystery ? 'A daily operations series from one of our partner organisations. Its source and generating process stay hidden until the debrief.' : esc(TS_SETS[s.ds].story)} You have ${TS_N} daily observations (${tsDate(0)} to ${tsDate(TS_N - 1)}). Days 1–${TS_N - TS_TEST} are the training set; the last ${TS_TEST} days (${tsDate(TS_N - TS_TEST)} onwards) are held out as the test set for judging forecasts. Sample ${s.seed}.</p>
     <div class="ex-sum"><span><b>Observations:</b> ${TS_N}</span><span><b>Mean:</b> ${n2(mean(y))}</span><span><b>Std. dev.:</b> ${n2(stdev(y))}</span><span><b>Min:</b> ${Math.min(...y)}</span><span><b>Max:</b> ${Math.max(...y)}</span><span><b>Unit:</b> ${esc(tsaUnit())} per day</span></div>
-    <details class="exhibit"><summary>Exhibit 1: the full daily series (${TS_N} rows)</summary><div class="tsa-table"><table class="tbl ex"><thead><tr><th>Day</th><th>Date</th><th class="n">Value</th><th>Set</th></tr></thead><tbody>${y.map((v, i) => `<tr><td>${i + 1}</td><td>${tsDate(i)}</td><td class="n">${v}</td><td>${i < TS_N - TS_TEST ? 'train' : 'test'}</td></tr>`).join('')}</tbody></table></div></details>
-    <div class="actions"><button class="btn small" id="tsaCsv">⬇ Download series (CSV)</button><span class="small muted">Columns: Date, Value, Set. Try the same steps in Python (statsmodels) and compare: the ADF, ACF and PACF figures match.</span></div></details></section>
+    <details class="exhibit"><summary>Exhibit 1: the full daily series (${TS_N} rows)</summary><div class="tsa-table"><table class="tbl ex"><thead><tr><th>Day</th><th>Date</th><th>Weekday</th><th class="n">Value</th><th>Set</th></tr></thead><tbody>${y.map((v, i) => `<tr><td>${i + 1}</td><td>${tsDate(i)}</td><td>${TS_DOW[tsDow(i)]}</td><td class="n">${v}</td><td>${i < TS_N - TS_TEST ? 'train' : 'test'}</td></tr>`).join('')}</tbody></table></div></details>
+    <div class="actions"><button class="btn small" id="tsaCsv">⬇ Download series (CSV)</button><span class="small muted">Columns: Date, Weekday, Value, Set. Try the same steps in Python (statsmodels) and compare: the ADF, ACF and PACF figures match.</span></div></details></section>
   <section class="card"><h3>Stepwise analysis<span class="sub">${cur <= 8 ? `Step ${cur} of 8 · the agent is waiting for you` : 'Complete'}</span></h3>
     <div class="rchips">${chips}</div>
     ${hist ? `<div style="margin-top:10px">${hist}</div>` : ''}
@@ -3199,21 +3330,29 @@ function bindTSA() {
   on('tsaSubmit', tsaSubmit);
   on('tsaRolling', () => { o.rolling = true; tsaSay('Added the 30-day rolling mean and standard deviation. A stationary series has a flat rolling mean and a steady rolling std.'); render(); });
   on('tsaHalves', () => { const y = tsaY(), h = Math.floor(TS_N / 2); o.halves = [['Days 1–' + h, mean(y.slice(0, h)), stdev(y.slice(0, h))], [`Days ${h + 1}–${TS_N}`, mean(y.slice(h)), stdev(y.slice(h))]]; tsaSay(`First half: mean ${n2(o.halves[0][1])}, std ${n2(o.halves[0][2])}. Second half: mean ${n2(o.halves[1][1])}, std ${n2(o.halves[1][2])}.`); render(); });
+  on('tsaWeek', () => { o.week = true; tsaSay('Computed the average for each weekday. A weekly pattern shows up as weekdays that sit consistently above or below the overall mean.'); render(); });
   on('tsaAdf0', () => { o.adf0 = adfTest(tsaY()); tsaSay(`ADF on y: statistic ${o.adf0.stat.toFixed(3)}, p-value ${fmtP(o.adf0.p)}, ${o.adf0.lags} lags (AIC), ${o.adf0.nobs} observations.`); render(); });
-  on('tsaAdfT', () => { o.adfT = adfTest(tsaSeries()); tsaSay(`ADF on ${tsaLabel()}: statistic ${o.adfT.stat.toFixed(3)}, p-value ${fmtP(o.adfT.p)}.`); render(); });
+  on('tsaAcf0', () => { const y = tsaY(), vals = acf(y, 28); o.acf0 = {vals, bands: acfBands(vals, y.length)}; tsaSay(`Plotted the ACF of y for 28 lags. ACF at lag 7 = ${vals[6].toFixed(3)}, lag 14 = ${vals[13].toFixed(3)}, lag 21 = ${vals[20].toFixed(3)}.`); render(); });
+  on('tsaAdfT', () => { const w = tsaSeries(); o.adfT = adfTest(w); o.seasT = tsSeasonCheck(w); tsaSay(`ADF on ${tsaLabel()}: statistic ${o.adfT.stat.toFixed(3)}, p-value ${fmtP(o.adfT.p)}. ACF at lag 7 = ${o.seasT.r7.toFixed(3)}, lag 14 = ${o.seasT.r14.toFixed(3)}.`); render(); });
   on('tsaCorr', () => {
-    s.lags = +$('#tsaLags').value; const w = tsaSeries(), isA = s.step === 5;
+    s.lags = +$('#tsaLags').value; if (s.D && s.lags < 21) s.lags = 30;
+    const w = tsaSeries(), isA = s.step === 5;
     const vals = isA ? acf(w, s.lags) : pacf(w, s.lags), bands = isA ? acfBands(vals, w.length) : vals.map(() => 1.96 / Math.sqrt(w.length));
-    o[isA ? 'acf' : 'pacf'] = {vals, bands, pat: corrPattern(vals, bands)};
+    o[isA ? 'acf' : 'pacf'] = {vals, bands, pat: corrPattern(vals, bands, s.D ? TS_S : 0), spat: s.D ? seasPattern(vals, bands) : null};
     tsaSay(`Plotted the ${isA ? 'ACF (Bartlett 95% band)' : 'PACF (95% band ±1.96/√n)'} of ${tsaLabel()} for ${s.lags} lags.`); render();
   });
-  on('tsaBack3', () => { s.d = 0; s.log = false; o.adfT = o.acf = o.pacf = null; delete s.grades[3]; delete s.grades[4]; delete s.grades[5]; delete s.grades[6]; s.step = 3; tsaSay('Back to Step 3: choose a transformation again.'); render(); });
+  on('tsaBack3', () => { s.d = 0; s.D = 0; s.log = false; o.adfT = o.acf = o.pacf = null; delete s.grades[3]; delete s.grades[4]; delete s.grades[5]; delete s.grades[6]; s.step = 3; tsaSay('Back to Step 3: choose a transformation again.'); render(); });
+  document.querySelectorAll('.tsa-fam').forEach(el => { el.onchange = () => { const k = el.dataset.k, f = el.value; $('#tsaAR' + k).hidden = f !== 'arima'; $('#tsaMA' + k).hidden = f !== 'ma'; $('#tsaNo' + k).hidden = !['ses', 'holt', 'hwa', 'hwm'].includes(f); $('#tsaNone' + k).hidden = f !== 'naive' && f !== 'snaive'; const u = $('#tsaUse' + k); if (u) u.checked = true; }; });
   on('tsaFit', () => {
-    const specs = [1, 2, 3].filter(k => k === 1 || $('#tsaUse' + k).checked).map(k => [+$('#tsaP' + k).value, +$('#tsaD' + k).value, +$('#tsaQ' + k).value]);
-    const uniq = specs.filter((m, i) => specs.findIndex(x => x.join() === m.join()) === i);
-    s.fits = uniq.map(([p, d, q]) => tsEvaluate(tsaY(), p, d, q, s.log));
-    const bA = s.fits.reduce((a, b) => (b.aic < a.aic ? b : a)), bM = s.fits.reduce((a, b) => (b.mape < a.mape ? b : a));
-    tsaSay(`Fitted ${s.fits.map(f => f.label).join(', ')} on days 1–${TS_N - TS_TEST} and forecast the test period. Lowest AIC: ${bA.label} (${n2(bA.aic)}). Lowest test MAPE: ${bM.label} (${bM.mape.toFixed(2)}%).`);
+    const specs = [1, 2, 3, 4].filter(k => k === 1 || $('#tsaUse' + k).checked).map(k => {
+      const fam = $('#tsaF' + k).value;
+      if (fam === 'arima') return {fam, p: +$('#tsaP' + k).value, d: +$('#tsaD' + k).value, q: +$('#tsaQ' + k).value, P: +$('#tsaSP' + k).value, D: +$('#tsaSD' + k).value, Q: +$('#tsaSQ' + k).value, log: s.log};
+      return fam === 'ma' ? {fam, w: +$('#tsaW' + k).value} : {fam};
+    });
+    const uniq = specs.filter((m, i) => specs.findIndex(x => JSON.stringify(x) === JSON.stringify(m)) === i);
+    s.fits = uniq.map(sp => tsEvalSpec(tsaY(), sp));
+    const wa = s.fits.filter(f => isFinite(f.aic)), bM = s.fits.reduce((a, b) => (b.mape < a.mape ? b : a));
+    tsaSay(`Fitted ${s.fits.map(f => f.label).join(', ')} on days 1–${TS_N - TS_TEST} and forecast the test period.${wa.length ? ` Lowest AIC: ${wa.reduce((a, b) => (b.aic < a.aic ? b : a)).label}.` : ''} Lowest test MAPE: ${bM.label} (${bM.mape.toFixed(2)}%).`);
     render();
   });
   on('tsaTo8', () => { s.step = 8; render(); });
@@ -3223,7 +3362,7 @@ function bindTSA() {
   on('tsaNewSample', () => { tsaNew(s.mystery ? 'mystery' : s.ds, s.seed + 1); render(); });
   const ds = $('#tsaDs'); if (ds) ds.onchange = () => { tsaNew(ds.value, 1); render(); };
   on('tsaCsv', () => {
-    const y = tsaY(), csv = ['Date,Value,Set', ...y.map((v, i) => `${tsDate(i)},${v},${i < TS_N - TS_TEST ? 'train' : 'test'}`)].join('\r\n');
+    const y = tsaY(), csv = ['Date,Weekday,Value,Set', ...y.map((v, i) => `${tsDate(i)},${TS_DOW[tsDow(i)]},${v},${i < TS_N - TS_TEST ? 'train' : 'test'}`)].join('\r\n');
     const url = URL.createObjectURL(new Blob([csv], {type: 'text/csv'})), a = document.createElement('a');
     a.href = url; a.download = `opslab-timeseries-${s.mystery ? 'mystery' : s.ds}-sample${s.seed}.csv`; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 2000);
   });
@@ -3231,13 +3370,13 @@ function bindTSA() {
 function renderTSAAgent() {
   const s = state.tsa; if (!s) return;
   const graded = Object.values(s.grades), ok = graded.filter(g => g.ok).length;
-  const tools = {1: ['Rolling mean & std', 'First-half vs second-half statistics'], 2: ['ADF test on y'], 3: ['Apply your chosen transformation'], 4: ['ADF test on the transformed series'], 5: ['ACF plot (10–40 lags)'], 6: ['PACF plot (10–40 lags)'], 7: ['Fit up to 3 ARIMA models, forecast the test set'], 8: ['Compare fitted models']}[s.step] || [];
+  const tools = {1: ['Rolling mean & std', 'First-half vs second-half statistics', 'Average by weekday'], 2: ['ADF test on y'], 3: ['ACF of y for 28 lags (weekly spikes)', 'Apply your chosen transformation (regular and/or seasonal difference, log)'], 4: ['ADF test and weekly-pattern check on the transformed series'], 5: ['ACF plot (10–40 lags)'], 6: ['PACF plot (10–40 lags)'], 7: ['Fit up to 4 models from any family: ARIMA, SARIMA, naïve, seasonal naïve, moving average, SES, Holt, Holt-Winters', 'Forecast the 30-day test set'], 8: ['Compare fitted models']}[s.step] || [];
   const items = s.hist.slice(-14).reverse();
   $('#side').innerHTML = `<div class="card"><div class="ai-head"><div class="ai-badge">AI</div><div><h3>Analytics Agent</h3><p><span class="status-dot" style="background:${s.step <= 8 ? 'var(--warn)' : 'var(--good)'}"></span>${s.step <= 8 ? 'Waiting for your input' : 'Lab complete'}</p></div></div>
     ${s.step <= 8 ? `<div class="ai-section"><div class="rec"><div class="name">⏸ Step ${s.step}: ${esc(TSA_STEPS[s.step - 1])}</div><p class="small" style="margin:4px 0 0">I won't move ahead or give the answer. Ask me for analysis, then submit your decision.</p>${tools.length ? `<div class="small" style="margin-top:6px"><b>Analyses I can run now:</b><ul class="clean">${tools.map(t => `<li>${esc(t)}</li>`).join('')}</ul></div>` : ''}</div></div>` : ''}
     <div class="ai-section"><h4>Decisions checked</h4><div class="score"><div><div class="big">${ok}/${graded.length || 0}</div><div class="small muted">correct so far</div></div><div style="flex:1"><div class="meter"><i style="width:${graded.length ? ok / graded.length * 100 : 0}%"></i></div></div></div></div>
     <div class="ai-section"><h4>Analysis log (newest first)</h4>${items.map(h => `<div class="issue ${h.kind === 'verdict' ? (h.ok ? 'ok' : 'high') : ''}" ${h.kind === 'you' ? 'style="border-style:dashed"' : ''}><span class="ic">${h.kind === 'you' ? '🧑' : h.kind === 'verdict' ? (h.ok ? '✓' : '!') : '⚙'}</span><div class="small">${h.kind === 'you' ? '<b>You</b> ' : ''}${esc(h.text.replace(/^[✓✗] /, ''))}</div></div>`).join('')}</div>
-    <p class="small muted" style="margin:6px 0 0">All statistics are computed in your browser and match Python's statsmodels (adfuller, acf, pacf). The agent chat is available on topics 1–7.</p></div>` + activityCard();
+    <p class="small muted" style="margin:6px 0 0">All statistics are computed in your browser. ADF, ACF and PACF match Python's statsmodels; ARIMA/SARIMA estimates agree with statsmodels' SARIMAX to about ±0.02. The agent chat is available on the simulation topics.</p></div>` + activityCard();
 }
 
 /* ---------------- 11. Study Room ----------------

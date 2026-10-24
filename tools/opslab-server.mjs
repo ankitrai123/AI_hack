@@ -90,9 +90,27 @@ const IGNORE_ISSUES = new Set(['shift', 'timestudy']); // informational only
 
 // ---------- storage ----------
 let DB = {rooms: {}};
-try { DB = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8')); } catch (e) {}
-let saveTimer = null;
-function save() { clearTimeout(saveTimer); saveTimer = setTimeout(() => { fs.writeFile(DATA_FILE, JSON.stringify(DB), () => {}); }, 300); }
+for (const f of [DATA_FILE, DATA_FILE + '.bak']) {
+  if (!fs.existsSync(f)) continue;
+  try { DB = JSON.parse(fs.readFileSync(f, 'utf8')); if (f !== DATA_FILE) console.log(`Recovered room data from ${f}`); break; }
+  catch (e) { console.log(`Could not read ${f} (${e.message}); trying the backup.`); }
+}
+if (!DB || typeof DB.rooms !== 'object') DB = {rooms: {}};
+// Saves are atomic (write a temp file, then rename), keep the previous version as .bak,
+// and are flushed when the server stops, so a Ctrl+C never loses or corrupts class data.
+let saveTimer = null, dirty = false;
+function flush() {
+  if (!dirty) return; dirty = false; clearTimeout(saveTimer);
+  try {
+    const tmp = DATA_FILE + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(DB));
+    if (fs.existsSync(DATA_FILE)) fs.copyFileSync(DATA_FILE, DATA_FILE + '.bak');
+    fs.renameSync(tmp, DATA_FILE);
+  } catch (e) { console.error('Could not save room data: ' + e.message); dirty = true; }
+}
+function save() { dirty = true; clearTimeout(saveTimer); saveTimer = setTimeout(flush, 300); }
+for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(sig, () => { flush(); process.exit(0); });
+process.on('exit', flush);
 const sha = s => crypto.createHash('sha256').update(String(s)).digest('hex');
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 function newCode() { let c; do { c = Array.from(crypto.randomBytes(6), b => CODE_CHARS[b % CODE_CHARS.length]).join(''); } while (DB.rooms[c]); return c; }

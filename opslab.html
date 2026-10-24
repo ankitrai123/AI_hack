@@ -120,6 +120,14 @@ table.jobs th,table.jobs td{padding:3px 6px;text-align:left;border-bottom:1px so
 table.jobs input{width:64px}
 .scen-agent{border:1px dashed var(--accent);border-radius:10px;padding:10px 12px;margin:8px 0 4px;background:color-mix(in srgb,var(--accent) 4%,var(--panel))}
 .scen-head{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}
+.case-brief{margin:8px 0;max-width:95ch}
+.case-sum{cursor:pointer;list-style:none}
+.case-sum::-webkit-details-marker{display:none}
+details.exhibit{border:1px solid var(--line);border-radius:9px;padding:6px 10px;margin:6px 0;background:var(--panel-2)}
+details.exhibit summary{cursor:pointer;font-weight:700;font-size:13px}
+.tbl.ex{font-size:12px;margin-top:4px}
+.tbl.ex th{text-transform:none;letter-spacing:0;font-size:11.5px}
+.ex-sum{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12px;margin:6px 0 2px}
 .seg{display:inline-flex;margin-top:12px;border:1px solid var(--line);border-radius:10px;overflow:hidden}
 .seg button{border:0;background:var(--panel);color:var(--ink);padding:7px 14px;font-weight:600;font-size:13px}
 .seg button.on{background:var(--accent);color:var(--accent-ink)}
@@ -1453,6 +1461,119 @@ function readInputs(t) {
   return p;
 }
 
+/* ---- Case data: the complete data a student needs to solve each case ----
+   A written brief plus numbered exhibits built from the current scenario (standard, generated, or
+   campaign round), with a CSV download for spreadsheet analysis. */
+const mean = a => sum(a) / a.length;
+const stdev = a => { const m = mean(a); return Math.sqrt(sum(a.map(x => (x - m) ** 2)) / Math.max(1, a.length - 1)); };
+const n1 = v => (Math.round(v * 10) / 10).toString();
+const n2 = v => (Math.round(v * 100) / 100).toString();
+// Past demand comes from the same process as the simulated period, but a different stream (no peeking).
+function demandHistory(p, days = 90) { return stdNormals(500000 + p.seed * 7919, days).map(x => Math.max(0, Math.round(p.mu + p.sigma * x))); }
+function dayGrid(values, label) {
+  const rows = [];
+  for (let i = 0; i < values.length; i += 10) rows.push([`${label} ${i + 1}–${Math.min(values.length, i + 10)}`, ...values.slice(i, i + 10)]);
+  return {columns: ['Days', ...Array.from({length: 10}, (_, k) => `+${k}`)], rows,
+    summary: [['Mean', n2(mean(values))], ['Std. deviation', n2(stdev(values))], ['Min', Math.min(...values)], ['Max', Math.max(...values)], ['Total', sum(values)]]};
+}
+const CASEDATA = {
+  bottleneck(p) {
+    return {brief: `Your plant runs one ${p.shift}-minute shift a day. Every unit passes through Cutting, Assembly and Packing, in that order. Customers order ${p.demand} units per shift, and demand you cannot meet is lost. Each unit sold contributes ${F.money(p.margin)}. Each machine you staff costs ${F.money(p.mcost)} per shift, and each station can run 1 to 4 identical machines in parallel. Decide how many machines to staff at each station to maximise shift profit.`,
+      exhibits: [
+        {title: 'Process data', columns: ['Step', 'Station', 'Process time (min/unit, one machine)', 'Machines allowed'], rows: [[1, 'A · Cutting', p.tA, '1–4'], [2, 'B · Assembly', p.tB, '1–4'], [3, 'C · Packing', p.tC, '1–4']]},
+        {title: 'Market and cost data', columns: ['Item', 'Value'], rows: [['Demand', `${p.demand} units per shift`], ['Shift length', `${p.shift} minutes`], ['Contribution margin', `${F.money(p.margin)} per unit sold`], ['Machine cost', `${F.money(p.mcost)} per machine per shift`], ['Unmet demand', 'Lost (no backlog, no overtime)']]}]};
+  },
+  inventory(p, ctx) {
+    const hist = demandHistory(p), ex = [
+      {title: 'Supply and cost data', columns: ['Item', 'Value'], rows: [['Supplier lead time', `${p.lt} days (fixed)`], ['Holding cost', `${F.money2(p.h)} per unit per day (on hand at end of day)`], ['Ordering cost', `${F.money(p.S)} per order`], ['Stockout cost', `${F.money(p.pen)} per unit short (sale lost)`], ['Starting inventory', `${p.start} units on hand, nothing on order`], ['Planning horizon', `${p.days} days`], ['Review', 'Inventory position checked daily; order Q when it falls to the reorder point or below']]},
+      {title: 'Demand history: last 90 days (units per day)', note: `Planning estimate: about ${p.mu} units/day with a standard deviation of ${p.sigma}. The next ${p.days} days come from the same demand process (independent days, demand scenario ${p.seed}), so use this history to estimate demand, its variability and lead-time demand.`, ...dayGrid(hist, 'Days')}];
+    if (ctx.run && ctx.run.r.demand) ex.push({title: 'Actual demand in your last run (revealed after the run)', note: 'For your debrief: compare it with the history and with your reorder point.', ...dayGrid(ctx.run.r.demand, 'Days')});
+    return {brief: `You manage a stocked component. Exhibit 2 shows the last 90 days of daily demand. The supplier delivers ${p.lt} days after an order is placed. Holding a unit costs ${F.money2(p.h)} per day, each order costs ${F.money(p.S)}, and each unit you cannot supply is a lost sale costing ${F.money(p.pen)}. You start with ${p.start} units. Choose a reorder point (ROP) and an order quantity (Q) for the next ${p.days} days to minimise total cost.`, exhibits: ex};
+  },
+  scheduling(p) {
+    const P = sum(p.jobs.map(j => j.p));
+    return {brief: `One bottleneck machine must process ${p.jobs.length} jobs, all available now (day 0). It works on one job at a time and does not interrupt a job once started. Each day a job finishes after its due date costs ${F.money(p.pen)}. Choose the processing sequence to minimise the total late penalty (and, as a tie-breaker, average flow time).`,
+      exhibits: [
+        {title: 'Job data', columns: ['Job', 'Arrival order', 'Processing time (days)', 'Due date (day)'], rows: p.jobs.map((j, i) => [j.id, i + 1, j.p, j.d])},
+        {title: 'Other data', columns: ['Item', 'Value'], rows: [['Start of schedule', 'Day 0, all jobs ready'], ['Total processing time', `${P} days`], ['Late penalty', `${F.money(p.pen)} per job per day late`], ['Machine', 'One machine; no setups between jobs; no pre-emption']]}]};
+  },
+  quality(p) {
+    const rate = prev => Math.min(p.pmin, p.p0) + (p.p0 - Math.min(p.pmin, p.p0)) * Math.exp(-prev / 1000);
+    return {brief: `Your line produces batches of ${F.int(p.N)} units with a base defect rate of ${p.p0}%. You can spend on prevention (training, fixtures, poka-yoke), which lowers the defect rate toward ${p.pmin}%, and you can inspect a share of each batch. Inspection finds ${p.det}% of the defects it examines; caught defects are reworked (${p.rs}% succeed, the rest are scrapped). Every defect that reaches a customer costs ${F.money(p.ce)}. Choose prevention spend and inspection coverage to minimise the total cost of quality.`,
+      exhibits: [
+        {title: 'Process quality data', columns: ['Item', 'Value'], rows: [['Batch size', `${F.int(p.N)} units`], ['Base defect rate (no prevention)', `${p.p0}%`], ['Best achievable defect rate', `${p.pmin}%`], ['Inspection detection rate', `${p.det}% of defects in inspected units`], ['Rework success rate', `${p.rs}%`]]},
+        {title: 'Cost data', columns: ['Cost', 'Value'], rows: [['Inspection', `${F.money2(p.ci)} per unit inspected`], ['Rework', `${F.money2(p.cr)} per defect caught`], ['Scrap', `${F.money2(p.cs)} per unit that fails rework`], ['External failure', `${F.money2(p.ce)} per defect shipped (warranty, returns)`]]},
+        {title: 'Prevention effectiveness (engineering estimate)', note: 'Each additional $1,000 per batch removes about 63% of the defects above the best achievable rate.', columns: ['Prevention spend per batch', 'Expected defect rate'], rows: [0, 500, 1000, 2000, 3000, 4000, 6000, 8000].map(v => [F.money(v), F.pct(rate(v))])}]};
+  },
+  queue(p) {
+    const r = rng(4242 + Math.round(p.lam * 10) * 7 + Math.round(p.svc * 10)), rows = [];
+    let t = 0;
+    for (let i = 1; i <= 40; i++) { const ia = -Math.log(1 - r()) * 60 / p.lam, sv = -Math.log(1 - r()) * p.svc; t += ia; rows.push([i, n2(t), n2(ia), n2(sv)]); }
+    const ias = rows.map(x => +x[2]), svs = rows.map(x => +x[3]);
+    return {brief: `Customers arrive at your service desk at random, about ${p.lam} per hour, and each needs on average ${p.svc} minutes of service (service times vary a lot). Each server costs ${F.money(p.wage)} per hour, and management values each hour a customer spends waiting in the queue at ${F.money(p.wcost)}. The target is that ${p.SLt}% of customers wait less than ${p.T} minutes. Choose the number of servers that meets the target at the lowest total cost.`,
+      exhibits: [
+        {title: 'Demand, service and cost data', columns: ['Item', 'Value'], rows: [['Arrival rate (long-run average)', `${p.lam} customers per hour (random, Poisson arrivals)`], ['Service time (average)', `${p.svc} minutes (exponentially distributed)`], ['Server cost', `${F.money(p.wage)} per server per hour`], ['Waiting cost', `${F.money(p.wcost)} per customer-hour in the queue`], ['Service-level target', `${p.SLt}% of customers wait less than ${p.T} minutes`], ['Queue discipline', 'One shared line, first come first served, no customers leave']]},
+        {title: 'Observation log: 40 consecutive customers', note: 'A time-and-motion sample from the desk. Use it to check the planning averages above.', columns: ['Customer', 'Arrival time (min)', 'Time since previous arrival (min)', 'Service time (min)'], rows,
+          summary: [['Average time between arrivals (min)', n2(mean(ias))], ['Implied arrival rate (per hour)', n2(60 / mean(ias))], ['Average service time (min)', n2(mean(svs))]]}]};
+  },
+  supply(p, ctx) {
+    const hid = ctx.hidden.includes('dur');
+    return {brief: `You sell ${p.d} units a day of a component bought mainly from a primary supplier (lead time ${p.L1} days). A qualified backup supplier delivers in ${p.L2} days but charges ${F.money(p.prem)} more per unit. ${hid ? 'There is a risk that the primary supplier shuts down for up to 30 days, starting on day ' + p.s + '; you only learn the length after you commit your plan.' : p.dur > 0 ? `The primary supplier will shut down for ${p.dur} days starting on day ${p.s}.` : 'No disruption is expected in this period.'} Each unit you cannot sell loses ${F.money(p.margin)} of margin, and holding stock costs ${F.money2(p.h)} per unit per day. Choose a backup share, a buffer stock and a contingency plan to minimise the total disruption cost over 60 days.`,
+      exhibits: [
+        {title: 'Supplier data', columns: ['Supplier', 'Lead time (days)', 'Price vs primary', 'Capacity'], rows: [['Primary', p.L1, 'base price', 'Unlimited when operating; ships nothing during a shutdown'], ['Backup', p.L2, `+${F.money(p.prem)} per unit`, `Contracted share of daily orders, plus up to ${p.spare} units/day spare in an emergency`]]},
+        {title: 'Demand and cost data', columns: ['Item', 'Value'], rows: [['Demand', `${p.d} units per day, constant, 60-day horizon`], ['Lost margin', `${F.money(p.margin)} per unit not available (sale lost)`], ['Holding cost', `${F.money2(p.h)} per unit per day`], ['Replenishment', 'Daily order-up-to policy: order up to lead-time demand + buffer stock']]},
+        {title: 'Disruption', columns: ['Item', 'Value'], rows: [['Start', `Day ${p.s}`], ['Duration', hid ? 'Unknown until the round is played (risk: 0–30 days)' : `${p.dur} days`], ['Effect', 'The primary supplier ships nothing. Orders placed with it during the shutdown ship when it reopens.'], ['Contingency plan', 'If active, orders switch to the backup after the response time, up to its capacity']]}]};
+  },
+  leadtime(p) {
+    const z = stdNormals(777, 10), obs = z.map(x => p.obs * (1 + 0.08 * x)), adj = p.obs / mean(obs), cycles = obs.map(v => n2(v * adj));
+    return {brief: `Customer orders (${p.D} units a day, ${p.T} working minutes a day) flow through order entry, cutting, transport, assembly, inspection and packing. Units move in batches; every batch needs a setup at each machine. Customers value speed: each hour a unit spends in the system costs ${F.money2(p.dc)}, and each unit the line cannot make loses ${F.money(p.margin)}. Assembly time must come from the time study in Exhibit 2. Choose the batch size and which improvements to fund to minimise the total daily cost.`,
+      exhibits: [
+        {title: 'Process route', columns: ['Step', 'Type', 'Time per unit (min)', 'Setup per batch (min)', 'Notes'], rows: [
+          ['1 Order entry', 'Non-value-added', '–', '–', `${p.od} min delay per order`], ['2 Cutting', 'Value-added', p.tc, p.Sc, 'One machine'], ['3 Transport', 'Non-value-added', '–', '–', `${p.move} min per batch move to assembly`],
+          ['4 Assembly', 'Value-added', 'Standard time from Exhibit 2', p.Sa, 'One operator'], ['5 Inspection', 'Non-value-added', p.ti, 0, 'Removed if poka-yoke is funded'], ['6 Packing', 'Value-added', p.tp, p.Sp, 'One packer']]},
+        {title: 'Time study: assembly, 10 observed cycles (minutes)', note: `Performance rating of the observed operator: ${p.rating}%. Personal, fatigue and delay (PF&D) allowance: ${p.allow}%.`, columns: ['Cycle', ...cycles.map((_, i) => i + 1)], rows: [['Observed time', ...cycles]], summary: [['Mean observed time', n2(mean(cycles.map(Number)))], ['Rating', `${p.rating}%`], ['Allowance', `${p.allow}%`]]},
+        {title: 'Demand, variability, cost and improvement data', columns: ['Item', 'Value'], rows: [['Demand', `${p.D} units per day`], ['Available time', `${p.T} minutes per day`], ['Variability', `ca² = ce² = ${p.cv} (1 = random, exponential-like)`], ['Delay cost', `${F.money2(p.dc)} per unit per hour of lead time`], ['Lost margin', `${F.money(p.margin)} per unit of demand not made`],
+          ['SMED', `Cuts every setup time by 60%; costs ${F.money(p.cSmed)} per day`], ['Cellular layout', `Cuts transport time by 80%; costs ${F.money(p.cCell)} per day`], ['Poka-yoke at source', `Removes the inspection step; costs ${F.money(p.cPoka)} per day`]]}]};
+  }
+};
+function caseDataFor(t) {
+  const p = state.inputs[t.id], c = state.camp[t.id];
+  const active = state.mode[t.id] === 'campaign' && c && c.rounds.length < c.n;
+  const hidden = active ? roundFor(t, c, c.rounds.length).hidden : [];
+  const cd = CASEDATA[t.id](p, {hidden, run: lastRun(t.id)});
+  const story = state.mode[t.id] === 'campaign' ? (c && c.custom ? {title: c.custom.title, story: c.custom.story} : null) : state.cases[t.id];
+  return {...cd, story, round: active ? roundFor(t, c, c.rounds.length).label : null};
+}
+function caseDataHTML(t) {
+  const cd = caseDataFor(t);
+  const cell = v => esc(v === undefined || v === null ? '' : v);
+  return `<section class="card" id="caseData"><details id="caseDetails" ${state.caseClosed && state.caseClosed[t.id] ? '' : 'open'}><summary class="case-sum"><h3 style="display:inline-flex;margin:0">📋 Case data${cd.round ? ` · ${esc(cd.round)}` : ''}</h3><span class="small muted"> everything you need to solve the case · updates with the scenario · click to ${state.caseClosed && state.caseClosed[t.id] ? 'expand' : 'collapse'}</span></summary>
+    ${cd.story ? `<p class="case-brief"><b>${esc(cd.story.title)}.</b> ${esc(cd.story.story)}</p>` : ''}
+    <p class="case-brief">${esc(cd.brief)}</p>
+    ${cd.exhibits.map((e, i) => `<details class="exhibit" open><summary>Exhibit ${i + 1}: ${esc(e.title)}</summary>${e.note ? `<p class="small muted" style="margin:4px 0 6px">${esc(e.note)}</p>` : ''}
+      <div class="scroll-x"><table class="tbl ex"><thead><tr>${e.columns.map(h => `<th>${cell(h)}</th>`).join('')}</tr></thead><tbody>${e.rows.map(r => `<tr>${r.map((v, j) => `<td class="${j && typeof v === 'number' ? 'n' : ''}">${cell(v)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>
+      ${e.summary ? `<div class="ex-sum">${e.summary.map(([k, v]) => `<span><b>${cell(k)}:</b> ${cell(v)}</span>`).join('')}</div>` : ''}</details>`).join('')}
+    <div class="actions"><button class="btn small" id="caseCsv">⬇ Download case data (CSV)</button><span class="small muted">Open it in Excel or Google Sheets to do your own analysis.</span></div></details></section>`;
+}
+function caseCSV(t) {
+  const cd = caseDataFor(t), q = v => `"${String(v ?? '').replace(/"/g, '""')}"`, L = [];
+  L.push(q(`OpsLab case data: ${t.name}${cd.round ? ' · ' + cd.round : ''}`));
+  if (cd.story) L.push(q(cd.story.title + '. ' + cd.story.story));
+  L.push(q(cd.brief), '');
+  cd.exhibits.forEach((e, i) => { L.push(q(`Exhibit ${i + 1}: ${e.title}`)); if (e.note) L.push(q(e.note)); L.push(e.columns.map(q).join(',')); e.rows.forEach(r => L.push(r.map(q).join(','))); (e.summary || []).forEach(([k, v]) => L.push([q(k), q(v)].join(','))); L.push(''); });
+  return L.join('\r\n');
+}
+function bindCaseData(t) {
+  const d = $('#caseDetails'); if (d) d.addEventListener('toggle', () => { state.caseClosed = state.caseClosed || {}; state.caseClosed[t.id] = !d.open; });
+  const b = $('#caseCsv'); if (!b) return;
+  b.onclick = () => {
+    const url = URL.createObjectURL(new Blob(['﻿' + caseCSV(t)], {type: 'text/csv;charset=utf-8'}));
+    const a = document.createElement('a'); a.href = url; a.download = `opslab-${t.id}-case-data.csv`; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  };
+}
+function refreshCaseData(t) { const el = $('#caseData'); if (!el) return; el.outerHTML = caseDataHTML(t); bindCaseData(t); }
+
 function renderTopic(t) {
   const p = state.inputs[t.id], runs = state.runs[t.id], run = lastRun(t.id);
   const isCamp = state.mode[t.id] === 'campaign', camp = state.camp[t.id];
@@ -1467,6 +1588,7 @@ function renderTopic(t) {
     </details>
     <div class="seg" role="group" aria-label="Mode"><button id="modeSingle" class="${isCamp ? '' : 'on'}">Single runs (sandbox)</button><button id="modeCamp" class="${isCamp ? 'on' : ''}">Campaign: quarters or years</button></div>
   </section>
+  ${caseDataHTML(t)}
   ${isCamp ? campaignHTML(t) : ''}
   <section class="card"><h3>Your decisions &amp; scenario<span class="sub">${campActive ? `Set your decisions for ${esc(nextRound.label)}. The round sets the scenario.` : 'Blue fields are your decisions. The rest describe the scenario.'}</span></h3>
     <div class="inputs" id="inputs">
@@ -1638,9 +1760,10 @@ function runSimulation(t) {
 function bindInputs(t) {
   const p = state.inputs[t.id];
   $$('#inputs input[type=range]').forEach(rg => rg.addEventListener('input', () => { const n = $('#in-' + rg.dataset.id); n.value = rg.value; }));
-  $$('#inputs input[type=number][data-id]').forEach(n => n.addEventListener('change', () => readInputs(t)));
-  $$('#inputs select, #inputs input[type=checkbox]').forEach(el => el.addEventListener('change', () => { readInputs(t); if (t.params.some(x => x.showIf)) { renderMain(); } }));
-  $$('#inputs input[type=range]').forEach(rg => rg.addEventListener('change', () => readInputs(t)));
+  bindCaseData(t);
+  $$('#inputs input[type=number]').forEach(n => n.addEventListener('change', () => { readInputs(t); refreshCaseData(t); }));
+  $$('#inputs select, #inputs input[type=checkbox]').forEach(el => el.addEventListener('change', () => { readInputs(t); if (t.params.some(x => x.showIf)) { renderMain(); } else refreshCaseData(t); }));
+  $$('#inputs input[type=range]').forEach(rg => rg.addEventListener('change', () => { readInputs(t); refreshCaseData(t); }));
   $('#runBtn').onclick = () => { const run = runSimulation(t); if (run) { render(); } };
   $('#resetBtn').onclick = () => { state.inputs[t.id] = defaults(t); state.runs[t.id] = []; state.adviceOpen[t.id] = false; state.errors[t.id] = ''; state.camp[t.id] = null; logActivity(t, 'Topic reset to defaults'); render(); };
   const scenarioDefaults = () => { const d = defaults(t); t.params.filter(x => x.role === 'scenario').forEach(x => { state.inputs[t.id][x.id] = d[x.id]; }); };
@@ -1939,6 +2062,7 @@ function runTool(t, name, input) {
         share_of_best_option: F.pct(run.analysis.eff),
         rule_based_best: {option: run.analysis.best.name, decisions: t.describe(run.analysis.best.p), kpis: kpiDump(t, run.analysis.best.r, run.analysis.best.p)}} : null,
       inputs_differ_from_latest_run: run ? JSON.stringify(run.p) !== JSON.stringify(cur) : null,
+      case_brief: caseDataFor(t).brief,
       current_case: state.cases[t.id] ? {title: state.cases[t.id].title, story: state.cases[t.id].story, source: state.cases[t.id].source} : null,
       campaign: state.mode[t.id] === 'campaign' && state.camp[t.id] ? (() => { const c = state.camp[t.id]; const nr = c.rounds.length < c.n ? roundFor(t, c, c.rounds.length) : null;
         return {period: c.period, rounds: c.n, played: c.rounds.map(r => ({round: r.label, decisions: t.describe(r.p), value: fmtV(obj.fmt, r.value), ai_best: fmtV(obj.fmt, r.bestValue), share_of_best: F.pct(r.eff)})),

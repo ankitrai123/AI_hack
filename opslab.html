@@ -128,6 +128,16 @@ details.exhibit summary{cursor:pointer;font-weight:700;font-size:13px}
 .tbl.ex{font-size:12px;margin-top:4px}
 .tbl.ex th{text-transform:none;letter-spacing:0;font-size:11.5px}
 .ex-sum{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12px;margin:6px 0 2px}
+.tsa-opts{display:flex;flex-direction:column;gap:6px;margin:6px 0}
+.tsa-opt{display:flex;gap:8px;align-items:center;flex-wrap:wrap;border:1px solid var(--line);border-radius:9px;padding:7px 10px;background:var(--panel-2);cursor:pointer;font-size:13px}
+.tsa-opt:has(input:checked){border-color:var(--accent);background:var(--accent-soft)}
+.tsa-opt input{accent-color:var(--accent)}
+.tsa-sel{border:1px solid var(--line);background:var(--panel-2);color:var(--ink);border-radius:7px;padding:4px 6px;font:inherit;font-size:13px}
+.tsa-q{margin:14px 0 4px;font-size:13.5px}
+.tsa-step{border-top:1px solid var(--line);margin-top:12px;padding-top:6px}
+.tsa-table{max-height:280px;overflow:auto}
+pre.adf{background:var(--panel-2);border:1px solid var(--line);border-radius:9px;padding:10px 12px;font-size:12.5px;line-height:1.45;overflow-x:auto;margin:8px 0}
+.rchip.bad{background:var(--bad-soft);color:var(--bad);border-color:transparent}
 .seg{display:inline-flex;margin-top:12px;border:1px solid var(--line);border-radius:10px;overflow:hidden}
 .seg button{border:0;background:var(--panel);color:var(--ink);padding:7px 14px;font-weight:600;font-size:13px}
 .seg button.on{background:var(--accent);color:var(--accent-ink)}
@@ -1347,15 +1357,19 @@ function barGroups({categories, series, ref, yLabel, fmt, sub, unit = ' units/sh
   g += `<line class="axis" x1="${L}" x2="${W - R}" y1="${Tp + ph}" y2="${Tp + ph}"/><text transform="translate(12 ${Tp + ph / 2}) rotate(-90)" text-anchor="middle">${esc(yLabel)}</text>`;
   return `<svg class="chart" viewBox="0 0 ${W} ${Hh}" role="img" aria-label="${esc(yLabel)}">${g}</svg>`;
 }
-function lineChart({x, series, hlines = [], shade = [], xLabel, yLabel, yFmt, marks = [], discrete, callouts = []}) {
+function lineChart({x, series, hlines = [], shade = [], xLabel, yLabel, yFmt, marks = [], discrete, callouts = [], autoY = false}) {
   const W = 640, Hh = 270, L = 52, R = 14, Tp = 16, B = 38, pw = W - L - R, ph = Hh - Tp - B;
   const vals = series.flatMap(s => s.values).filter(isFinite).concat(hlines.map(h => h.value));
-  const max = niceMax(Math.max(1, ...vals) * 1.05);
+  // autoY: fit the axis to the data (needed for differenced series with negative values and for zooming in on forecasts)
+  let lo = 0, max = niceMax(Math.max(1, ...vals) * 1.05);
+  if (autoY) { const a = Math.min(...vals), b = Math.max(...vals), pad = (b - a || Math.abs(b) || 1) * 0.08, st = niceMax((b - a + 2 * pad) / 4) / 2 || 1; lo = Math.floor((a - pad) / st) * st; max = Math.ceil((b + pad) / st) * st; }
+  const span = max - lo || 1;
   const x0 = x[0], x1 = x[x.length - 1] === x0 ? x0 + 1 : x[x.length - 1];
-  const X = v => L + (v - x0) / (x1 - x0) * pw, Y = v => Tp + ph - clamp(v, 0, max) / max * ph;
+  const X = v => L + (v - x0) / (x1 - x0) * pw, Y = v => Tp + ph - (clamp(v, lo, max) - lo) / span * ph;
   let g = '';
   shade.forEach(s => { const a = X(clamp(s.from, x0, x1)), b = X(clamp(s.to, x0, x1)); g += `<rect x="${a}" y="${Tp}" width="${Math.max(0, b - a)}" height="${ph}" fill="var(--shade)"/><text x="${(a + b) / 2}" y="${Tp + 12}" text-anchor="middle">${esc(s.label)}</text>`; });
-  ticks(max).forEach(t => { g += `<line class="gridl" x1="${L}" x2="${W - R}" y1="${Y(t)}" y2="${Y(t)}"/><text x="${L - 6}" y="${Y(t) + 4}" text-anchor="end">${yFmt ? yFmt(t) : shortNum(t)}</text>`; });
+  ticks(span).map(t => lo + t).forEach(t => { g += `<line class="gridl" x1="${L}" x2="${W - R}" y1="${Y(t)}" y2="${Y(t)}"/><text x="${L - 6}" y="${Y(t) + 4}" text-anchor="end">${yFmt ? yFmt(t) : shortNum(t)}</text>`; });
+  if (autoY && lo < 0 && max > 0) g += `<line x1="${L}" x2="${W - R}" y1="${Y(0)}" y2="${Y(0)}" stroke="var(--faint)" stroke-width="1"/>`;
   const xt = discrete ? x : ticks(x1 - x0, 6).map(v => Math.round(x0 + v));
   xt.forEach(t => { g += `<text x="${X(t)}" y="${Tp + ph + 16}" text-anchor="middle">${t}</text>`; });
   hlines.forEach(h => { g += `<line x1="${L}" x2="${W - R}" y1="${Y(h.value)}" y2="${Y(h.value)}" stroke="var(--ink)" stroke-dasharray="5 4" stroke-width="1.2" opacity=".7"/><text x="${W - R}" y="${Y(h.value) - 5}" text-anchor="end" style="fill:var(--ink)">${esc(h.label)} ${shortNum(h.value)}</text>`; });
@@ -1417,7 +1431,7 @@ function stackedBars({categories, stacks, fmt = F.money, axis = v => '$' + short
 /* ---------------- 5. UI & state ---------------- */
 const defaults = t => Object.fromEntries(t.params.map(x => [x.id, JSON.parse(JSON.stringify(x.def))]));
 const state = {view: 'bottleneck', inputs: {}, runs: {}, adviceOpen: {}, history: [], errors: {}, mode: {}, camp: {}, cases: {}};
-function resetState() { TOPICS.forEach(t => { state.inputs[t.id] = defaults(t); state.runs[t.id] = []; state.adviceOpen[t.id] = false; state.mode[t.id] = 'single'; state.camp[t.id] = null; state.cases[t.id] = null; }); state.history = []; }
+function resetState() { TOPICS.forEach(t => { state.inputs[t.id] = defaults(t); state.runs[t.id] = []; state.adviceOpen[t.id] = false; state.mode[t.id] = 'single'; state.camp[t.id] = null; state.cases[t.id] = null; }); state.history = []; state.tsa = null; state.tsaDone = []; }
 resetState();
 const lastParams = id => state.inputs[id];
 const lastRun = id => state.runs[id][state.runs[id].length - 1];
@@ -1426,6 +1440,7 @@ const lastAI = id => { const r = lastRun(id); return r ? r.analysis.best.p : {};
 function renderNav() {
   const nav = $('#nav');
   nav.innerHTML = '<div class="group">Simulations</div>' + TOPICS.map(t => `<button data-view="${t.id}" class="${state.view === t.id ? 'active' : ''}"><span class="num">${t.num}</span>${esc(t.name)}<span class="runs">${state.runs[t.id].length ? state.runs[t.id].length + ' run' + (state.runs[t.id].length > 1 ? 's' : '') : ''}</span></button>`).join('') +
+    `<button data-view="tsa" class="${state.view === 'tsa' ? 'active' : ''}"><span class="num">${TOPICS.length + 1}</span>Time Series Analysis<span class="runs">${state.tsa ? (state.tsa.step > 8 ? state.tsa.final.score + '/8' : 'step ' + state.tsa.step) : ''}</span></button>` +
     '<div class="group">Debrief</div>' +
     `<button data-view="room" class="${state.view === 'room' ? 'active' : ''}"><span class="num">👥</span>Class room<span class="runs">${ROOM.student ? esc(ROOM.student.code) : ROOM.prof ? 'host' : ''}</span></button>` +
     `<button data-view="report" class="${state.view === 'report' ? 'active' : ''}"><span class="num">R</span>Session report</button>` +
@@ -1582,7 +1597,7 @@ function renderTopic(t) {
   const dec = t.params.filter(x => x.role === 'decision'), scn = t.params.filter(x => x.role === 'scenario');
   const learnOpen = runs.length === 0 ? 'open' : '';
   let html = `<section class="card">
-    <div class="thead"><div class="t"><div class="small muted" style="font-weight:700">TOPIC ${t.num} OF ${TOPICS.length}</div><h2>${esc(t.name)}</h2><p class="role"><b>Your role:</b> ${esc(t.role)}</p></div></div>
+    <div class="thead"><div class="t"><div class="small muted" style="font-weight:700">TOPIC ${t.num} OF ${TOPICS.length + 1}</div><h2>${esc(t.name)}</h2><p class="role"><b>Your role:</b> ${esc(t.role)}</p></div></div>
     <details class="learn" ${learnOpen}><summary>Concept &amp; formulas</summary>
       <div class="learn-grid"><div>${t.concept}</div><div class="formula">${t.formulas.map(([a, b]) => `<div><b>${esc(a)}</b>${esc(b)}</div>`).join('')}</div></div>
     </details>
@@ -1839,6 +1854,7 @@ function renderMain() {
   if (state.view === 'report') { main.innerHTML = reportHTML(); $('#printBtn').onclick = () => window.print(); return; }
   if (state.view === 'guide') { main.innerHTML = guideHTML(); return; }
   if (state.view === 'room') { main.innerHTML = roomHTML(); bindRoom(); return; }
+  if (state.view === 'tsa') { stopDashTimer(); main.innerHTML = tsaHTML(); bindTSA(); return; }
   stopDashTimer();
   const t = TOPIC[state.view];
   main.innerHTML = renderTopic(t);
@@ -1846,14 +1862,16 @@ function renderMain() {
 }
 function render() {
   renderNav(); renderMain();
-  renderAI(TOPIC[state.view] || null);
+  if (state.view === 'tsa') renderTSAAgent(); else renderAI(TOPIC[state.view] || null);
 }
 
 /* ---------------- 6. Session report & instructor guide ---------------- */
 function reportHTML() {
   const used = TOPICS.filter(t => state.runs[t.id].length);
   let html = `<section class="card doc"><div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><div style="flex:1"><h2>End-of-run report</h2><p class="muted" style="margin:0">Prepared by the rule-based AI Operations Agent from your logged runs · ${new Date().toLocaleString()}</p></div><button class="btn primary noprint" id="printBtn">Print / save as PDF</button></div>`;
-  if (!used.length) return html + `<div class="empty" style="margin-top:14px">No runs yet. Run at least one simulation and the report fills in automatically.</div></section>`;
+  const ts = (state.tsaDone || []).length ? `<div class="rep-topic"><h3>${TOPICS.length + 1}. Time Series Analysis (ARIMA)</h3>${state.tsaDone.map((r, n) => `<p class="small" style="margin:10px 0 4px"><b>Lab ${n + 1}:</b> ${esc(r.name)}${r.mystery ? ' (mystery)' : ''}, sample ${r.seed}. True process ARIMA(${r.truth.join(',')}). Decisions correct: <b>${r.score}/8</b>. Chosen model ${r.chosen}, test MAPE ${r.mape.toFixed(2)}% (automatic AIC search ${r.bench}: ${r.benchMape.toFixed(2)}%).</p>
+      <table class="tbl"><tbody>${TSA_STEPS.map((t, i) => { const g = r.grades[i + 1]; return `<tr><td>${i + 1}. ${esc(t)}</td><td class="${g && g.ok ? 'up' : 'down'}">${g ? (g.ok ? '✓' : '✗') : '–'}</td><td class="small">${g ? esc(g.text.replace(/^[✓✗] /, '')) : ''}</td></tr>`; }).join('')}</tbody></table>`).join('')}</div>` : '';
+  if (!used.length) return html + (ts || `<div class="empty" style="margin-top:14px">No runs yet. Run at least one simulation and the report fills in automatically.</div>`) + '</section>';
   const overall = sum(used.map(t => bestRun(t).analysis.eff)) / used.length;
   html += `<div class="callout"><b>Summary:</b> ${used.length} of ${TOPICS.length} topics attempted, ${sum(used.map(t => state.runs[t.id].length))} runs in total. Averaging your best run per topic, you reached <b>${F.pct(overall)}</b> of the agent's best option.</div>`;
   used.forEach(t => {
@@ -1887,7 +1905,7 @@ function reportHTML() {
       ${last.analysis.isOptimal ? '' : `<p class="small"><b>Agent's closing advice:</b> ${t.explain(last.p, last.r, last.analysis.best)}</p>`}
     </div>`;
   });
-  return html + '</section>';
+  return html + ts + '</section>';
 }
 function bestRun(t) { return state.runs[t.id].reduce((a, b) => (Agent.better(t, b.r, a.r, b.p, a.p) ? b : a)); }
 
@@ -1902,6 +1920,7 @@ function guideHTML() {
     <li>Staff a service system using utilization, Erlang C, Little's Law and service-level targets.</li>
     <li>Design supply-chain resilience with buffer stock, dual sourcing and contingency plans.</li>
     <li>Analyse process time: takt time, lead time, process cycle efficiency, batch size and Little's Law, with a time study for standard time.</li>
+    <li>Build an ARIMA forecast step by step (Box–Jenkins): visual check, ADF test, differencing, ACF/PACF identification, and model selection with AIC/BIC and out-of-sample MAPE.</li>
     <li>Use analytics (what-if testing, optimization, diagnosis) to evaluate operational decisions.</li></ol>
   <h3>Suggested 75-minute session</h3><table class="tbl"><thead><tr><th>Time</th><th>Activity</th></tr></thead><tbody>
     <tr><td>0–10</td><td>Introduce the role: students are operations managers. Show the layout: decisions (blue) vs scenario inputs.</td></tr>
@@ -1916,6 +1935,8 @@ function guideHTML() {
     <li><b>Queues:</b> Why does going from 4 to 5 servers cut waiting so much more than going from 5 to 6?</li>
     <li><b>Disruption:</b> Set duration to 0. Which strategy wastes the most money? How do you price resilience?</li>
     <li><b>Process time:</b> Why does halving the batch size first cut lead time and then suddenly make it explode? What does SMED change? What share of the lead time is value-added?</li></ul>
+  <h3>Topic 8: Time Series Analysis lab</h3>
+  <p>A stepwise lab that follows the ARIMA sessions: (1) visualise and judge stationarity, (2) run the ADF test and conclude, (3) choose a transformation, (4) re-test and confirm (or difference again), (5) read the ACF, (6) read the PACF, (7) specify and fit up to three ARIMA models (trained on 335 days, tested on the last 30), and (8) choose the model to forecast with. The Analytics Agent runs only the analyses students request and checks every decision against the evidence. It waits for the student and never advances on its own. Wrong choices are allowed and their consequences show up later, so students learn from the path they took. The debrief reveals the true generating process, an automatic AIC search, a scorecard and a 14-day forecast. The ADF, ACF and PACF numbers match Python statsmodels, so students can repeat the analysis in Colab using the CSV. Use “Mystery dataset” for an exam-style exercise and “New sample” to give each student different data.</p>
   <h3>Scenario Agent and Ollama</h3>
   <p>Every topic has a <b>Scenario Agent</b>: type a brief (or leave it empty) and it writes a new case (title, story and scenario values), or a whole campaign when you pick “Rounds: written by the Scenario Agent”. Values are checked against each input's range and decisions are never changed. Without an LLM, <b>Random case</b> generates rule-based variations. For a free model, click <b>Use Ollama</b>. When students use the class server, your laptop's Ollama serves everyone. Use it to give each team a different case, or to localise cases to your students' industries.</p>
   <h3>Campaign mode (quarters or years)</h3>
@@ -2796,6 +2817,406 @@ async function useOllama() {
     return {err: true, text: viaServer ? `Could not reach Ollama through the class server. On the server laptop, start Ollama (ollama serve) and pull a model (ollama pull llama3.1). (${e.message})`
       : `Could not reach Ollama at localhost:11434. Install it from ollama.com, then run: OLLAMA_ORIGINS="*" ollama serve, and pull a model: ollama pull llama3.1. (${e.message})`};
   }
+}
+
+/* ---------------- 10. Time Series Analysis lab: statistics engine ----------------
+   Data generation, ADF test (autolag AIC, MacKinnon p-values as in statsmodels' adfuller), ACF with
+   Bartlett bands, PACF (Durbin–Levinson), ARIMA(p,d,q) fitting by conditional least squares with
+   stationarity/invertibility enforced, multi-step forecasts, AIC/BIC and test-set accuracy. */
+const TS_N = 365, TS_TEST = 30, TS_START = Date.UTC(2025, 0, 1);
+const TS_SETS = {
+  cylinders: {name: 'Oxygen cylinders used per day, city hospital', unit: 'cylinders', truth: [2, 0, 0], story: 'A 400-bed hospital tracks oxygen cylinders used each day to plan deliveries from its gas supplier.'},
+  milk: {name: 'Daily milk demand (kg), dairy cooperative', unit: 'kg', truth: [0, 1, 1], story: 'A dairy cooperative in Visakhapatnam records daily milk demand from its retail booths to plan procurement from farmers.'},
+  parcels: {name: 'E-commerce parcels handled per day, sorting hub', unit: 'parcels', truth: [1, 1, 0], story: 'A growing e-commerce sorting hub records parcels handled each day to plan staffing and trucks.'},
+  tickets: {name: 'Customer-service tickets per day', unit: 'tickets', truth: [0, 0, 2], story: 'A telecom call centre logs new service tickets per day to roster its agents.'},
+  veg: {name: 'Vegetable demand (kg) per day, online grocery hub', unit: 'kg', truth: [1, 1, 1], story: 'An online grocery dark store records daily vegetable demand to set purchase orders with mandis.'}
+};
+const TS_IDS = Object.keys(TS_SETS);
+const tsDiff = a => a.slice(1).map((v, i) => v - a[i]);
+function tsGenerate(id, seed) {
+  const burn = 150, N = TS_N + burn, z = stdNormals(9001 + seed * 104729 + TS_IDS.indexOf(id) * 7919, N + 2);
+  const y = [];
+  if (id === 'cylinders') { let x1 = 0, x2 = 0; for (let t = 0; t < N; t++) { const x = 0.6 * x1 + 0.25 * x2 + 8 * z[t]; x2 = x1; x1 = x; y.push(200 + x); } }
+  if (id === 'tickets') { for (let t = 2; t < N + 2; t++) y.push(150 + 6 * (z[t] + 0.7 * z[t - 1] + 0.4 * z[t - 2])); }
+  const integrate = (w, y0) => { let lev = y0; return w.map(v => (lev += v)); };
+  if (id === 'milk') { const w = []; for (let t = 1; t < N + 1; t++) w.push(0.4 + 4 * (z[t] + 0.6 * z[t - 1])); y.push(...integrate(w.slice(burn), 500)); }
+  if (id === 'parcels') { const w = []; let a = 0; for (let t = 0; t < N; t++) { a = 0.7 * a + 3 * z[t]; w.push(0.3 + a); } y.push(...integrate(w.slice(burn), 800)); }
+  if (id === 'veg') { const w = []; let a = 0; for (let t = 1; t < N + 1; t++) { a = 0.5 * a + 3 * (z[t] + 0.4 * z[t - 1]); w.push(0.2 + a); } y.push(...integrate(w.slice(burn), 1000)); }
+  const out = (y.length > TS_N ? y.slice(y.length - TS_N) : y).map(v => Math.round(Math.max(1, v) * 10) / 10);
+  return out;
+}
+const tsDate = i => new Date(TS_START + i * 86400000).toISOString().slice(0, 10);
+// OLS with (X'X)^-1 for standard errors.
+function tsOLS(X, yv) {
+  const n = X.length, k = X[0].length, A = Array.from({length: k}, () => new Array(2 * k).fill(0));
+  for (let r = 0; r < n; r++) for (let i = 0; i < k; i++) { for (let j = 0; j < k; j++) A[i][j] += X[r][i] * X[r][j]; }
+  for (let i = 0; i < k; i++) A[i][k + i] = 1;
+  for (let c = 0; c < k; c++) {
+    let piv = c; for (let r = c + 1; r < k; r++) if (Math.abs(A[r][c]) > Math.abs(A[piv][c])) piv = r;
+    [A[c], A[piv]] = [A[piv], A[c]];
+    const d = A[c][c] || 1e-12; for (let j = 0; j < 2 * k; j++) A[c][j] /= d;
+    for (let r = 0; r < k; r++) if (r !== c) { const f = A[r][c]; if (f) for (let j = 0; j < 2 * k; j++) A[r][j] -= f * A[c][j]; }
+  }
+  const inv = A.map(row => row.slice(k)), Xty = new Array(k).fill(0);
+  for (let r = 0; r < n; r++) for (let i = 0; i < k; i++) Xty[i] += X[r][i] * yv[r];
+  const beta = inv.map(row => row.reduce((s, v, j) => s + v * Xty[j], 0));
+  let ssr = 0; for (let r = 0; r < n; r++) { const e = yv[r] - X[r].reduce((s, v, j) => s + v * beta[j], 0); ssr += e * e; }
+  const aic = n * (Math.log(2 * Math.PI) + Math.log(ssr / n) + 1) + 2 * k;
+  return {beta, inv, ssr, n, k, aic, se: j => Math.sqrt(ssr / (n - k) * inv[j][j])};
+}
+const normCdf = x => { const t = 1 / (1 + 0.2316419 * Math.abs(x)), d = 0.3989423 * Math.exp(-x * x / 2), p = d * t * (0.3193815 + t * (-0.3565638 + t * (1.781478 + t * (-1.821256 + t * 1.330274)))); return x > 0 ? 1 - p : p; };
+// MacKinnon (1994) approximate p-value, constant-only regression, one variable.
+function adfPValue(stat) {
+  if (stat > 2.74) return 1; if (stat < -18.83) return 0;
+  const c = stat <= -1.61 ? [2.1659, 1.4412, 0.038269] : [1.7339, 0.93202, -0.12745, -0.010368];
+  return normCdf(c.reduce((s, v, i) => s + v * stat ** i, 0));
+}
+function adfTest(y) {
+  const dy = tsDiff(y), nobs = y.length;
+  let maxlag = Math.ceil(12 * Math.pow(nobs / 100, 0.25)); maxlag = Math.min(Math.floor(nobs / 2) - 2, maxlag);
+  const rows = (lags, start) => { const X = [], v = []; for (let t = start; t < dy.length; t++) { const r = [1, y[t]]; for (let i = 1; i <= lags; i++) r.push(dy[t - i]); X.push(r); v.push(dy[t]); } return {X, v}; };
+  let best = 0, bestAic = Infinity;
+  for (let L = 0; L <= maxlag; L++) { const {X, v} = rows(L, maxlag); const f = tsOLS(X, v); if (f.aic < bestAic - 1e-9) { bestAic = f.aic; best = L; } }
+  const {X, v} = rows(best, best), f = tsOLS(X, v), stat = f.beta[1] / f.se(1), T = f.n;
+  const crit = {'1%': -3.43035 - 6.5393 / T - 16.786 / T ** 2 - 79.433 / T ** 3, '5%': -2.86154 - 2.8903 / T - 4.234 / T ** 2 - 40.040 / T ** 3, '10%': -2.56677 - 1.5384 / T - 2.809 / T ** 2};
+  return {stat, p: adfPValue(stat), lags: best, nobs: T, crit};
+}
+function acf(x, L) {
+  const n = x.length, m = mean(x), c0 = sum(x.map(v => (v - m) ** 2));
+  return Array.from({length: L}, (_, k) => { let s = 0; for (let t = 0; t + k + 1 < n; t++) s += (x[t] - m) * (x[t + k + 1] - m); return s / c0; });
+}
+function acfBands(r, n) { let acc = 0; return r.map((v, k) => { const b = 1.96 * Math.sqrt((1 + 2 * acc) / n); acc += v * v; return b; }); }
+function pacf(x, L) {
+  const r = acf(x, L), out = []; let phi = [];
+  for (let k = 0; k < L; k++) {
+    const num = r[k] - phi.reduce((s, v, j) => s + v * r[k - 1 - j], 0), den = 1 - phi.reduce((s, v, j) => s + v * r[j], 0);
+    const pkk = num / den; phi = phi.map((v, j) => v - pkk * phi[k - 1 - j]); phi.push(pkk); out.push(pkk);
+  }
+  return out;
+}
+// Reads a correlogram the way the slides teach. Returns every defensible reading:
+// 'cut' after k (first k lags significant, then at most one stray spike up to lag 10),
+// 'tails' (significant lags that shrink gradually, or many significant lags), or 'none'.
+function corrPattern(vals, bands) {
+  const sig = vals.map((v, i) => Math.abs(v) > bands[i]);
+  let lead = 0; while (lead < sig.length && sig[lead]) lead++;
+  const later = sig.slice(lead + 1, 10).filter(Boolean).length, slow = vals.length >= 10 && vals[9] > 0.5;
+  const ok = [];
+  if (sig.slice(0, 5).filter(Boolean).length <= 1 && !sig[0]) ok.push({type: 'none', lag: 0});
+  if (lead >= 1 && lead <= 3 && later <= 1 && !slow) ok.push({type: 'cut', lag: lead});
+  const shrinking = lead >= 2 && vals.slice(0, lead).every((v, i) => i === 0 || Math.abs(v) <= Math.abs(vals[i - 1]) + 0.02);
+  if (slow || lead >= 4 || shrinking || (lead >= 1 && later >= 2)) ok.push({type: 'tails', lag: lead});
+  if (!ok.length) ok.push(lead ? {type: 'cut', lag: lead} : {type: 'none', lag: 0});
+  return {ok, main: ok[0], lead, later, slow, sig};
+}
+function nelderMead(f, x0, steps, iters) {
+  const n = x0.length; let S = [x0.slice()]; for (let i = 0; i < n; i++) { const x = x0.slice(); x[i] += steps[i]; S.push(x); }
+  let F = S.map(f);
+  for (let it = 0; it < iters; it++) {
+    const ord = F.map((v, i) => i).sort((a, b) => F[a] - F[b]); S = ord.map(i => S[i]); F = ord.map(i => F[i]);
+    if (Math.abs(F[n] - F[0]) < 1e-10 * (1 + Math.abs(F[0]))) break;
+    const c = Array.from({length: n}, (_, j) => mean(S.slice(0, n).map(x => x[j])));
+    const pt = a => c.map((v, j) => v + a * (S[n][j] - v));
+    const xr = pt(-1), fr = f(xr);
+    if (fr < F[0]) { const xe = pt(-2), fe = f(xe); if (fe < fr) { S[n] = xe; F[n] = fe; } else { S[n] = xr; F[n] = fr; } }
+    else if (fr < F[n - 1]) { S[n] = xr; F[n] = fr; }
+    else { const xc = pt(0.5), fc = f(xc); if (fc < F[n]) { S[n] = xc; F[n] = fc; } else { for (let i = 1; i <= n; i++) { S[i] = S[i].map((v, j) => S[0][j] + 0.5 * (v - S[0][j])); F[i] = f(S[i]); } } }
+  }
+  const b = F.indexOf(Math.min(...F)); return S[b];
+}
+function pacfToCoef(r) { let phi = []; for (let k = 0; k < r.length; k++) { const prev = phi.slice(); phi = prev.map((v, j) => v - r[k] * prev[k - 1 - j]); phi.push(r[k]); } return phi; }
+function arimaFit(y, p, d, q, useLog = false) {
+  const base = useLog ? y.map(Math.log) : y.slice(), levels = [base];
+  for (let i = 0; i < d; i++) levels.push(tsDiff(levels[i]));
+  const w = levels[d], n = w.length, sdw = stdev(w) || 1;
+  const unpack = th => ({mu: th[0], phi: pacfToCoef(th.slice(1, 1 + p).map(Math.tanh)), theta: pacfToCoef(th.slice(1 + p).map(Math.tanh)).map(v => -v)});
+  const resid = th => { const {mu, phi, theta} = unpack(th), e = new Array(n).fill(0); let sse = 0;
+    for (let t = p; t < n; t++) { let pr = mu; for (let i = 0; i < p; i++) pr += phi[i] * (w[t - 1 - i] - mu); for (let j = 0; j < q; j++) if (t - 1 - j >= 0) pr += theta[j] * e[t - 1 - j]; e[t] = w[t] - pr; sse += e[t] * e[t]; }
+    return {sse, e}; };
+  const th = (p + q) ? nelderMead(x => resid(x).sse, [mean(w), ...new Array(p + q).fill(0)], [sdw * 0.5, ...new Array(p + q).fill(0.4)], 500 * (p + q + 1)) : [mean(w)];
+  const {sse, e} = resid(th), nEff = n - p, s2 = sse / nEff, ll = -nEff / 2 * (Math.log(2 * Math.PI * s2) + 1), k = p + q + 2;
+  return {p, d, q, log: useLog, ...unpack(th), sigma2: s2, ll, aic: -2 * ll + 2 * k, bic: -2 * ll + k * Math.log(nEff), e, w, levels};
+}
+function arimaForecast(fit, h) {
+  const {mu, phi, theta, p, q, d} = fit, W = fit.w.slice(), E = fit.e.slice();
+  for (let s = 0; s < h; s++) { const t = W.length; let pr = mu; for (let i = 0; i < p; i++) pr += phi[i] * (W[t - 1 - i] - mu); for (let j = 0; j < q; j++) if (t - 1 - j < fit.e.length) pr += theta[j] * E[t - 1 - j]; W.push(pr); E.push(0); }
+  let f = W.slice(fit.w.length);
+  for (let lev = d - 1; lev >= 0; lev--) { let last = fit.levels[lev][fit.levels[lev].length - 1]; f = f.map(v => (last += v)); }
+  return fit.log ? f.map(Math.exp) : f;
+}
+function accuracy(actual, pred) {
+  const e = actual.map((v, i) => v - pred[i]);
+  return {rmse: Math.sqrt(mean(e.map(v => v * v))), mae: mean(e.map(Math.abs)), mape: 100 * mean(e.map((v, i) => Math.abs(v / actual[i])))};
+}
+function tsEvaluate(y, p, d, q, useLog = false) {
+  const train = y.slice(0, TS_N - TS_TEST), test = y.slice(TS_N - TS_TEST), fit = arimaFit(train, p, d, q, useLog), fc = arimaForecast(fit, TS_TEST);
+  return {p, d, q, log: useLog, fit, fc, ...accuracy(test, fc), aic: fit.aic, bic: fit.bic, label: `ARIMA(${p},${d},${q})${useLog ? ' on log' : ''}`};
+}
+// Automatic benchmark: choose d by repeated ADF tests, then the lowest-AIC ARIMA(p,d,q) for p, q in 0..3.
+function tsBenchmark(y) {
+  let d = 0, s = y.slice(0, TS_N - TS_TEST);
+  while (d < 2 && adfTest(s).p > 0.05) { s = tsDiff(s); d++; }
+  let best = null;
+  for (let p = 0; p <= 3; p++) for (let q = 0; q <= 3; q++) { const r = tsEvaluate(y, p, d, q); if (!best || r.aic < best.aic) best = r; }
+  return best;
+}
+
+/* ---- Time Series Analysis lab: stepwise UI ----
+   The player decides at every step; the Analytics Agent only runs the analysis that is asked for,
+   checks each decision against the evidence, and then waits for the next input. */
+const TSA = {cache: {}};
+const TSA_STEPS = ['Visualise the series', 'Test for stationarity (ADF)', 'Make the series stationary', 'Re-test the transformed series', 'Read the ACF plot', 'Read the PACF plot', 'Specify and fit candidate models', 'Choose the best model'];
+function tsaNew(ds, seed) {
+  const mystery = ds === 'mystery';
+  const real = mystery ? TS_IDS[Math.floor(rng(seed * 31 + 5)() * TS_IDS.length)] : ds;
+  state.tsa = {ds: real, mystery, seed, step: 1, log: false, d: 0, dec: {}, out: {}, grades: {}, hist: [], fits: null, final: null, lags: 20};
+  tsaSay(`New dataset loaded: ${mystery ? 'mystery series' : TS_SETS[real].name} (sample ${seed}). I will run only the analyses you ask for and check each decision. Step 1: look at the plot and decide whether the series is stationary.`);
+}
+const tsaY = () => { const s = state.tsa, k = s.ds + ':' + s.seed; return TSA.cache[k] || (TSA.cache[k] = tsGenerate(s.ds, s.seed)); };
+function tsaSeries() { const s = state.tsa; let b = s.log ? tsaY().map(Math.log) : tsaY().slice(); for (let i = 0; i < s.d; i++) b = tsDiff(b); return b; }
+const tsaLabel = (lg = state.tsa.log, d = state.tsa.d) => `${d === 2 ? 'Δ²' : d === 1 ? 'Δ' : ''}${lg ? 'log(y)' : 'y'}`;
+const tsaName = () => (state.tsa.mystery ? 'Mystery series' : TS_SETS[state.tsa.ds].name);
+const tsaUnit = () => TS_SETS[state.tsa.ds].unit;
+function tsaSay(text, kind = 'agent', ok) { state.tsa.hist.push({text, kind, ok, step: state.tsa.step, time: new Date()}); }
+function tsaGrade(step, ok, text) { state.tsa.grades[step] = {ok, text}; tsaSay(text, 'verdict', ok); logActivity({short: 'Time series'}, `Step ${step}: ${ok ? 'correct' : 'check'}`); }
+const fmtP = p => (p < 0.0001 ? p.toExponential(2) : p.toFixed(4));
+function adfBlock(r, label) {
+  return `<pre class="adf">ADF test on ${esc(label)}  (H₀: unit root, i.e. non-stationary)
+ADF Statistic: ${r.stat.toFixed(4)}
+p-value:       ${fmtP(r.p)}
+Used lags:     ${r.lags}   (chosen by AIC)
+Observations:  ${r.nobs}
+Critical Values:
+   1%: ${r.crit['1%'].toFixed(4)}
+   5%: ${r.crit['5%'].toFixed(4)}
+  10%: ${r.crit['10%'].toFixed(4)}</pre>`;
+}
+function corrChart(vals, bands, title) {
+  const W = 640, Hh = 230, L = 46, R = 12, Tp = 14, B = 34, pw = W - L - R, ph = Hh - Tp - B, n = vals.length;
+  const Y = v => Tp + ph / 2 - v * ph / 2, X = i => L + (i + 0.5) * pw / n;
+  let g = '';
+  [-1, -0.5, 0, 0.5, 1].forEach(t => { g += `<line class="gridl" x1="${L}" x2="${W - R}" y1="${Y(t)}" y2="${Y(t)}"/><text x="${L - 6}" y="${Y(t) + 4}" text-anchor="end">${t}</text>`; });
+  let up = '', dn = '';
+  bands.forEach((b, i) => { up += `${i ? 'L' : 'M'}${X(i) - pw / n / 2},${Y(b)} L${X(i) + pw / n / 2},${Y(b)} `; dn = `L${X(i) + pw / n / 2},${Y(-b)} L${X(i) - pw / n / 2},${Y(-b)} ` + dn; });
+  g += `<path d="${up}${dn}Z" fill="var(--you)" opacity=".13"/>`;
+  vals.forEach((v, i) => { const sig = Math.abs(v) > bands[i]; g += `<line x1="${X(i)}" x2="${X(i)}" y1="${Y(0)}" y2="${Y(v)}" stroke="${sig ? 'var(--ai)' : 'var(--faint)'}" stroke-width="3" stroke-linecap="round"/><circle cx="${X(i)}" cy="${Y(v)}" r="3.5" fill="${sig ? 'var(--ai)' : 'var(--faint)'}"/><rect class="hit" x="${X(i) - pw / n / 2}" y="${Tp}" width="${pw / n}" height="${ph}" data-tip="Lag ${i + 1}: ${v.toFixed(3)}\n95% band ±${bands[i].toFixed(3)}${sig ? ' · significant' : ''}"/>`; if (n <= 20 || (i + 1) % 5 === 0) g += `<text x="${X(i)}" y="${Tp + ph + 14}" text-anchor="middle">${i + 1}</text>`; });
+  g += `<line class="axis" x1="${L}" x2="${W - R}" y1="${Y(0)}" y2="${Y(0)}"/><text x="${L + pw / 2}" y="${Hh - 2}" text-anchor="middle">Lag</text>`;
+  return legend([['Significant lag', 'var(--ai)'], ['Not significant', 'var(--faint)'], ['95% confidence band', 'var(--you)']]) + `<svg class="chart" viewBox="0 0 ${W} ${Hh}" role="img" aria-label="${esc(title)}">${g}</svg>`;
+}
+function tsaSeriesChart(vals, label, opts = {}) {
+  const off = TS_N - vals.length, x = vals.map((_, i) => i + 1 + off), series = [{name: label, color: 'var(--you)', values: vals}];
+  if (opts.rolling) {
+    const w = 30, rm = vals.map((_, i) => (i < w - 1 ? NaN : mean(vals.slice(i - w + 1, i + 1)))), rs = vals.map((_, i) => (i < w - 1 ? NaN : stdev(vals.slice(i - w + 1, i + 1))));
+    series.push({name: '30-day rolling mean', color: 'var(--ai)', values: rm}, {name: '30-day rolling std', color: 'var(--s3)', values: rs});
+  }
+  return legend(series.map(s => [s.name, s.color, 'line'])) + lineChart({x, series, xLabel: 'Day', yLabel: label, autoY: true, shade: opts.test ? [{from: TS_N - TS_TEST, to: TS_N, label: 'Test (last 30 days)'}] : []});
+}
+function tsaOptions(name, opts, disabled) {
+  return `<div class="tsa-opts">${opts.map(([v, l, extra]) => `<label class="tsa-opt"><input type="radio" name="${name}" value="${v}" ${disabled ? 'disabled' : ''}><span>${l}</span>${extra || ''}</label>`).join('')}</div>`;
+}
+const lagSelect = (id, n = 5) => `<select id="${id}" class="tsa-sel" aria-label="lag">${Array.from({length: n}, (_, i) => `<option value="${i + 1}">${i + 1}</option>`).join('')}</select>`;
+function tsaStepBody() {
+  const s = state.tsa, y = tsaY(), o = s.out, n = s.step;
+  if (n === 1) return `${tsaSeriesChart(y, `${tsaName()} (${tsaUnit()})`, {rolling: o.rolling, test: true})}
+    <div class="actions"><button class="btn small" id="tsaRolling" ${o.rolling ? 'disabled' : ''}>📈 Ask the agent: add 30-day rolling mean &amp; std</button><button class="btn small" id="tsaHalves" ${o.halves ? 'disabled' : ''}>📊 Ask the agent: compare first and second half</button></div>
+    ${o.halves ? `<table class="tbl ex" style="max-width:420px"><thead><tr><th>Part</th><th class="n">Mean</th><th class="n">Std. dev.</th></tr></thead><tbody>${o.halves.map(h => `<tr><td>${h[0]}</td><td class="n">${n2(h[1])}</td><td class="n">${n2(h[2])}</td></tr>`).join('')}</tbody></table>` : ''}
+    <h4 class="tsa-q">Your decision: by eye, the series is…</h4>${tsaOptions('dec', [['stat', 'Stationary: it fluctuates around a stable mean with constant spread'], ['trend', 'Non-stationary: it has a trend or a wandering level (changing mean)'], ['var', 'Non-stationary: its spread (variance) changes over time']])}`;
+  if (n === 2) return `${o.adf0 ? adfBlock(o.adf0, 'the original series y') : '<p class="small muted">The agent waits for your request.</p>'}
+    <div class="actions"><button class="btn small" id="tsaAdf0" ${o.adf0 ? 'disabled' : ''}>🧪 Ask the agent: run the ADF test on the series</button></div>
+    <h4 class="tsa-q">Your decision: at the 5% level, the series is…</h4>${tsaOptions('dec', [['stat', 'Stationary: reject H₀ (p ≤ 0.05)'], ['nonstat', 'Non-stationary: cannot reject H₀ (p > 0.05)']], !o.adf0)}${o.adf0 ? '' : '<p class="small muted">Run the test first.</p>'}`;
+  if (n === 3) return `<p>ADF on the original series: statistic ${o.adf0.stat.toFixed(3)}, p = ${fmtP(o.adf0.p)}. Choose how to prepare the series for ARIMA.</p>
+    <h4 class="tsa-q">Your decision: apply…</h4>${tsaOptions('dec', [['none', 'No transformation: it is already stationary (d = 0)'], ['d1', 'First-order differencing: Δyₜ = yₜ − yₜ₋₁ (d = 1)'], ['d2', 'Second-order differencing: Δ²yₜ (d = 2)'], ['log', 'Log transform only: log(yₜ), to stabilise variance']])}`;
+  if (n === 4) return `${tsaSeriesChart(tsaSeries(), tsaLabel())}
+    ${o.adfT ? adfBlock(o.adfT, tsaLabel()) : ''}
+    <div class="actions"><button class="btn small" id="tsaAdfT" ${o.adfT ? 'disabled' : ''}>🧪 Ask the agent: run the ADF test on ${esc(tsaLabel())}</button></div>
+    <h4 class="tsa-q">Your decision: the transformed series ${esc(tsaLabel())} is…</h4>${tsaOptions('dec', [['ok', 'Stationary now: continue to the ACF plot'], ['more', `Still non-stationary: apply ${s.d ? 'another' : 'a first-order'} difference`]], !o.adfT)}${o.adfT ? '' : '<p class="small muted">Run the test first.</p>'}`;
+  if (n === 5 || n === 6) {
+    const isA = n === 5, c = isA ? o.acf : o.pacf, nm = isA ? 'ACF' : 'PACF', par = isA ? 'q (MA order)' : 'p (AR order)';
+    return `<p>Series: <b>${esc(tsaLabel())}</b> (d = ${s.d}${s.log ? ', log' : ''}). ${isA ? 'The ACF shows the correlation with each lag, including indirect effects. Use it for the MA order q.' : 'The PACF shows the direct effect of each lag after removing the shorter lags. Use it for the AR order p.'}</p>
+      ${c ? corrChart(c.vals, c.bands, nm) : ''}
+      <div class="actions"><label class="small">Lags <select id="tsaLags" class="tsa-sel">${[10, 20, 30, 40].map(L => `<option ${L === s.lags ? 'selected' : ''}>${L}</option>`).join('')}</select></label><button class="btn small" id="tsaCorr">📉 Ask the agent: plot the ${nm}</button></div>
+      ${c && c.pat.slow ? `<div class="issue med"><span class="ic">▲</span><div><b>Very slow decay.</b>A ${nm} that stays high for many lags usually means the series is still non-stationary.<div class="actions"><button class="btn small" id="tsaBack3">↩ Go back to Step 3</button></div></div></div>` : ''}
+      <h4 class="tsa-q">Your decision: the ${nm}…</h4>${tsaOptions('dec', [['cut', `Cuts off after lag ${lagSelect('tsaCutLag')} → ${par} = that lag`], ['tails', 'Tails off gradually (decays, possibly oscillating)'], ['none', 'Shows no significant spikes (white noise)']], !c)}${c ? '' : `<p class="small muted">Plot the ${nm} first.</p>`}`;
+  }
+  if (n === 7) {
+    const da = s.dec.acf || {}, dp = s.dec.pacf || {}, both = da.type === 'tails' && dp.type === 'tails';
+    const p0 = dp.type === 'cut' ? dp.lag : both ? 1 : 0, q0 = da.type === 'cut' ? da.lag : both ? 1 : 0;
+    const sel = (id, v, max) => `<select id="${id}" class="tsa-sel">${Array.from({length: max + 1}, (_, i) => `<option ${i === v ? 'selected' : ''}>${i}</option>`).join('')}</select>`;
+    const row = (k, on, p, q) => `<tr><td><label><input type="checkbox" id="tsaUse${k}" ${on ? 'checked' : ''} ${k === 1 ? 'disabled' : ''}> Model ${k}${k === 1 ? ' (your identified model)' : ''}</label></td><td>ARIMA( ${sel('tsaP' + k, p, 3)} , ${sel('tsaD' + k, s.d, 2)} , ${sel('tsaQ' + k, q, 3)} )</td></tr>`;
+    return `<p>From your readings: PACF ${dp.type === 'cut' ? `cuts off after lag ${dp.lag}` : dp.type === 'tails' ? 'tails off' : 'has no spikes'}, ACF ${da.type === 'cut' ? `cuts off after lag ${da.lag}` : da.type === 'tails' ? 'tails off' : 'has no spikes'}, d = ${s.d}${s.log ? ' on log(y)' : ''}. Specify up to three candidates. The agent fits each on the first ${TS_N - TS_TEST} days (training set) and forecasts the last ${TS_TEST} days (test set).</p>
+      <table class="tbl ex" style="max-width:560px"><tbody>${row(1, true, p0, q0)}${row(2, false, p0 ? p0 - 1 : 1, q0 ? q0 : 1)}${row(3, false, Math.min(3, p0 + 1), q0)}</tbody></table>
+      <div class="actions"><button class="btn primary" id="tsaFit">⚙ Ask the agent: fit the selected models</button></div>
+      ${s.fits ? tsaFitsHTML() + '<div class="actions"><button class="btn primary" id="tsaTo8">Continue to Step 8 →</button></div>' : ''}`;
+  }
+  if (n === 8) return `${tsaFitsHTML()}<h4 class="tsa-q">Your decision: which model will you use to forecast?</h4>${tsaOptions('dec', s.fits.map((f, i) => [String(i), `<b>${f.label}</b> · AIC ${n2(f.aic)} · MAPE ${f.mape.toFixed(2)}%`]))}
+    <div class="small" style="margin-top:6px">Main reason: <select id="tsaReason" class="tsa-sel"><option value="mape">Lowest error on the test set (MAPE/RMSE)</option><option value="aic">Lowest AIC/BIC (fit vs complexity)</option><option value="simple">Simplest model with similar accuracy</option></select></div>`;
+  return '';
+}
+function tsaFitsHTML() {
+  const s = state.tsa, f = s.fits; if (!f) return '';
+  const y = tsaY(), from = TS_N - 90, x = Array.from({length: 90}, (_, i) => from + i + 1);
+  const series = [{name: 'Actual', color: 'var(--ink)', values: y.slice(from)}, ...f.map((m, i) => ({name: m.label, color: ['var(--you)', 'var(--ai)', 'var(--s3)'][i], values: x.map(d => (d > TS_N - TS_TEST ? m.fc[d - (TS_N - TS_TEST) - 1] : NaN))}))];
+  const bestA = f.reduce((a, b) => (b.aic < a.aic ? b : a)), bestM = f.reduce((a, b) => (b.mape < a.mape ? b : a));
+  return `<div class="scroll-x"><table class="tbl"><thead><tr><th>Model</th><th>Parameters (estimated on training data)</th><th class="n">AIC</th><th class="n">BIC</th><th class="n">RMSE</th><th class="n">MAE</th><th class="n">MAPE</th></tr></thead><tbody>
+    ${f.map(m => `<tr><td><b>${m.label}</b></td><td class="small mono">c=${n2(m.fit.mu)}${m.fit.phi.map((v, i) => ` φ${i + 1}=${n2(v)}`).join('')}${m.fit.theta.map((v, i) => ` θ${i + 1}=${n2(v)}`).join('')} σ²=${n2(m.fit.sigma2)}</td><td class="n ${m === bestA ? 'up' : ''}">${n2(m.aic)}</td><td class="n">${n2(m.bic)}</td><td class="n">${n2(m.rmse)}</td><td class="n">${n2(m.mae)}</td><td class="n ${m === bestM ? 'up' : ''}">${m.mape.toFixed(2)}%</td></tr>`).join('')}</tbody></table></div>
+    <p class="small muted">Estimated by conditional least squares with a constant. AIC/BIC are comparable only between models with the same d (and scale); MAPE/RMSE on the 30-day test set are comparable across all models.</p>
+    ${legend(series.map(z => [z.name, z.color, 'line']))}${lineChart({x, series, xLabel: 'Day', yLabel: tsaUnit(), autoY: true, shade: [{from: TS_N - TS_TEST, to: TS_N, label: 'Test period'}]})}`;
+}
+function tsaSubmit() {
+  const s = state.tsa, o = s.out, v = ($('input[name=dec]:checked') || {}).value;
+  if (v === undefined) { $('#tsaErr').textContent = 'Choose an option first.'; return; }
+  const stationaryTruth = TS_SETS[s.ds].truth[1] === 0;
+  if (s.step === 1) {
+    s.dec.eye = v;
+    const ok = stationaryTruth ? v === 'stat' : v === 'trend';
+    tsaSay(`You judged the series ${v === 'stat' ? 'stationary' : v === 'trend' ? 'non-stationary (trend / wandering level)' : 'non-stationary (changing variance)'}.`, 'you');
+    tsaGrade(1, ok, ok ? (stationaryTruth ? '✓ Consistent with the plot: the series moves around a stable level with steady spread.' : '✓ Consistent with the plot: the level drifts, so the mean is not constant.')
+      : v === 'var' ? '✗ The spread looks roughly constant here. The issue to check is whether the level (mean) stays stable. The rolling mean helps.' : stationaryTruth ? '✗ Look again: the series keeps returning to the same level, and the rolling mean is flat.' : '✗ Look again: the level drifts over the year, so the mean is not constant (see the rolling mean).');
+    s.step = 2;
+  } else if (s.step === 2) {
+    s.dec.adf = v; const stat = o.adf0.p <= 0.05, ok = (v === 'stat') === stat;
+    tsaSay(`You concluded: ${v === 'stat' ? 'stationary' : 'non-stationary'}.`, 'you');
+    tsaGrade(2, ok, `${ok ? '✓' : '✗'} p = ${fmtP(o.adf0.p)} ${stat ? '≤' : '>'} 0.05, so we ${stat ? 'reject' : 'cannot reject'} the unit-root null: the series is ${stat ? 'stationary' : 'non-stationary'}${stat ? '' : ' and needs a transformation'}.`);
+    s.step = 3;
+  } else if (s.step === 3) {
+    s.dec.transform = v; const need = o.adf0.p > 0.05 ? 'd1' : 'none', ok = v === need;
+    s.log = v === 'log'; s.d = v === 'd1' ? 1 : v === 'd2' ? 2 : 0;
+    tsaSay(`You applied: ${({none: 'no transformation', d1: 'first-order differencing', d2: 'second-order differencing', log: 'a log transform'})[v]}.`, 'you');
+    tsaGrade(3, ok, ok ? (need === 'none' ? '✓ The ADF test already shows stationarity, so no differencing is needed (d = 0).' : '✓ First-order differencing removes a stochastic trend (unit root); it is the standard first step.')
+      : v === 'd2' ? '✗ Over-differencing: start with one difference and re-test. Differencing twice can introduce artificial negative correlation and inflate variance.'
+      : v === 'log' ? '✗ A log transform stabilises a growing variance but does not remove a trend or unit root. Re-test, then difference if needed.'
+      : v === 'none' ? '✗ The ADF test could not reject non-stationarity, so the series needs differencing before ARIMA.' : '✗ The ADF test shows the series is already stationary; differencing it would over-difference.');
+    s.out.adfT = null; s.step = 4;
+  } else if (s.step === 4) {
+    const statNow = o.adfT.p <= 0.05;
+    if (v === 'more') {
+      tsaSay(`You applied another difference (d = ${s.d + 1}).`, 'you');
+      tsaGrade(4, !statNow, statNow ? `✗ ${tsaLabel()} was already stationary (p = ${fmtP(o.adfT.p)}): differencing again over-differences.` : `✓ ${tsaLabel()} was still non-stationary (p = ${fmtP(o.adfT.p)}), so another difference is justified.`);
+      s.d = Math.min(2, s.d + 1); s.out.adfT = null; return render();
+    }
+    tsaSay(`You confirmed ${tsaLabel()} is stationary and moved on (d = ${s.d}).`, 'you');
+    tsaGrade(4, statNow, statNow ? `✓ p = ${fmtP(o.adfT.p)} ≤ 0.05: ${tsaLabel()} is stationary. d = ${s.d}.` : `✗ p = ${fmtP(o.adfT.p)} > 0.05: ${tsaLabel()} is still non-stationary. ARIMA identification on it will be unreliable.`);
+    s.step = 5;
+  } else if (s.step === 5 || s.step === 6) {
+    const isA = s.step === 5, c = isA ? o.acf : o.pacf, lag = +($('#tsaCutLag') || {value: 1}).value, nm = isA ? 'ACF' : 'PACF';
+    const dec = {type: v, lag: v === 'cut' ? lag : 0}; s.dec[isA ? 'acf' : 'pacf'] = dec;
+    const ok = c.pat.ok.some(r => r.type === v && (v !== 'cut' || r.lag === lag));
+    const read = r => (r.type === 'cut' ? `cuts off after lag ${r.lag}` : r.type === 'tails' ? 'tails off gradually' : 'has no significant spikes');
+    tsaSay(`You read the ${nm} as: ${read(dec)}.`, 'you');
+    tsaGrade(s.step, ok, `${ok ? '✓' : '✗'} The agent reads the ${nm} (significant lags: ${c.pat.sig.map((x, i) => (x ? i + 1 : null)).filter(Boolean).slice(0, 8).join(', ') || 'none'}) as: ${c.pat.ok.map(read).join(', or ')}.${!ok && v === 'cut' ? ` After lag ${lag} the spikes ${c.pat.lead > lag ? 'are still significant' : 'were already inside the band'}.` : ''} ${isA ? 'Rule: an ACF that cuts off after q suggests MA(q).' : 'Rule: a PACF that cuts off after p suggests AR(p).'}`);
+    s.step += 1;
+  } else if (s.step === 8) {
+    const ch = s.fits[+v], reason = $('#tsaReason').value;
+    tsaSay(`You chose ${ch.label} (reason: ${({mape: 'lowest test error', aic: 'lowest AIC/BIC', simple: 'simplest with similar accuracy'})[reason]}).`, 'you');
+    tsaFinish(+v, reason); return;
+  }
+  render();
+}
+function tsaFinish(idx, reason) {
+  const s = state.tsa, y = tsaY(), [tp, td, tq] = TS_SETS[s.ds].truth, ch = s.fits[idx], m1 = s.fits[0];
+  const truth = tsEvaluate(y, tp, td, tq), bench = tsBenchmark(y);
+  const bestM = s.fits.reduce((a, b) => (b.mape < a.mape ? b : a));
+  const okChoice = ch === bestM || (ch.mape <= bestM.mape + 0.25 && (ch.aic <= bestM.aic || ch.p + ch.q < bestM.p + bestM.q));
+  const exact = m1.p === tp && m1.d === td && m1.q === tq && !m1.log, close = !exact && m1.d === td && !m1.log && m1.mape <= truth.mape * 1.02;
+  s.grades[7] = {ok: exact || close, text: exact ? `✓ Your identified model ARIMA(${tp},${td},${tq}) matches the process that generated the data.` : close ? `✓ Your model ${m1.label} is not the generating process ARIMA(${tp},${td},${tq}), but it forecasts as well (MAPE ${m1.mape.toFixed(2)}% vs ${truth.mape.toFixed(2)}%).` : `✗ The data came from ARIMA(${tp},${td},${tq}). Your model ${m1.label} ${m1.d !== td ? `used d = ${m1.d} instead of d = ${td}` : `missed the AR/MA orders`} and forecasts worse (MAPE ${m1.mape.toFixed(2)}% vs ${truth.mape.toFixed(2)}%).`};
+  s.grades[8] = {ok: okChoice, text: okChoice ? `✓ Good choice: ${ch.label} has ${ch === bestM ? 'the lowest' : 'near-lowest'} out-of-sample MAPE among your candidates${ch !== bestM ? ' and is simpler or better on AIC' : ''}. For forecasting, the slides' rule gives priority to out-of-sample accuracy.` : `✗ ${bestM.label} forecasts the test period better (MAPE ${bestM.mape.toFixed(2)}% vs ${ch.mape.toFixed(2)}%). For forecasting, prioritise out-of-sample accuracy; use AIC/BIC to break near-ties and prefer the simpler model.`};
+  tsaSay(s.grades[7].text, 'verdict', s.grades[7].ok); tsaSay(s.grades[8].text, 'verdict', s.grades[8].ok);
+  const full = arimaFit(y, ch.p, ch.d, ch.q, ch.log), next = arimaForecast(full, 14);
+  const score = Object.values(s.grades).filter(g => g.ok).length;
+  s.final = {idx, reason, truth, bench, next, score, chosen: ch};
+  state.tsaDone = state.tsaDone || [];
+  state.tsaDone.push({name: TS_SETS[s.ds].name, mystery: s.mystery, seed: s.seed, truth: TS_SETS[s.ds].truth, score, chosen: ch.label, mape: ch.mape, bench: bench.label, benchMape: bench.mape, grades: JSON.parse(JSON.stringify(s.grades)), time: new Date()});
+  s.step = 9;
+  tsaSay(`Done. Score ${score}/8. The data came from ARIMA(${tp},${td},${tq}). The automatic AIC search picks ${bench.label} (MAPE ${bench.mape.toFixed(2)}%); your chosen model has MAPE ${ch.mape.toFixed(2)}%.`);
+  logActivity({short: 'Time series'}, `Lab finished: ${score}/8, chose ${ch.label}`);
+  render();
+}
+function tsaFinalHTML() {
+  const s = state.tsa, f = s.final, [tp, td, tq] = TS_SETS[s.ds].truth;
+  const rows = [['Your chosen model', f.chosen], ['Your identified model (Model 1)', s.fits[0]], [`True process: ARIMA(${tp},${td},${tq})`, f.truth], [`Automatic search (lowest AIC, p,q ≤ 3): ${f.bench.label}`, f.bench]];
+  return `<div class="callout"><b>Debrief.</b> ${s.mystery ? `The mystery series was <b>${esc(TS_SETS[s.ds].name)}</b>. ` : ''}It was generated by <b>ARIMA(${tp},${td},${tq})</b>. You scored <b>${f.score}/8</b> on your decisions, and your chosen model's test MAPE is <b>${f.chosen.mape.toFixed(2)}%</b> (automatic AIC search: ${f.bench.mape.toFixed(2)}%).</div>
+    <div class="scroll-x"><table class="tbl"><thead><tr><th>Model</th><th></th><th class="n">AIC</th><th class="n">RMSE</th><th class="n">MAPE</th></tr></thead><tbody>${rows.map(([k, m]) => `<tr><td>${esc(k)}</td><td><b>${m.label}</b></td><td class="n">${n2(m.aic)}</td><td class="n">${n2(m.rmse)}</td><td class="n">${m.mape.toFixed(2)}%</td></tr>`).join('')}</tbody></table></div>
+    <h4 class="tsa-q">Scorecard</h4><table class="tbl ex"><tbody>${TSA_STEPS.map((t, i) => { const g = s.grades[i + 1]; return `<tr><td>${i + 1}. ${t}</td><td class="${g && g.ok ? 'up' : 'down'}">${g ? (g.ok ? '✓' : '✗') : '–'}</td><td class="small">${g ? esc(g.text.replace(/^[✓✗] /, '')) : ''}</td></tr>`; }).join('')}</tbody></table>
+    <h4 class="tsa-q">Lessons</h4><ul class="clean small"><li>ARIMA needs a stationary series: constant mean and variance, only white noise left in the residuals.</li><li>Use the ADF test (H₀: unit root). If p &gt; 0.05, difference once and re-test; avoid over-differencing.</li><li>PACF cutting off after p → AR(p); ACF cutting off after q → MA(q); both tailing off → ARMA(p,q).</li><li>An automatic AIC search often picks a bigger model with almost the same test accuracy. In operations, prefer the simpler model unless the extra complexity pays off.</li><li>For forecasting, judge models on held-out data (MAPE/RMSE). Use AIC/BIC to compare fit vs complexity among models with the same d.</li></ul>
+    <h4 class="tsa-q">Next 14 days with ${f.chosen.label} (refitted on all ${TS_N} days)</h4>
+    <div class="scroll-x"><table class="tbl ex"><thead><tr>${f.next.map((_, i) => `<th>${tsDate(TS_N + i).slice(5)}</th>`).join('')}</tr></thead><tbody><tr>${f.next.map(v => `<td class="n">${n1(v)}</td>`).join('')}</tr></tbody></table></div>
+    <div class="actions"><button class="btn primary" id="tsaAgain">Try a new sample of this dataset</button><button class="btn" id="tsaMystery">Try a mystery dataset</button></div>`;
+}
+function tsaHTML() {
+  if (!state.tsa) tsaNew('milk', 1);
+  const s = state.tsa, y = tsaY(), cur = s.step;
+  const chips = TSA_STEPS.map((t, i) => { const g = s.grades[i + 1], st = cur > 8 || g ? (g && g.ok ? 'done' : g ? 'bad' : '') : i + 1 === cur ? 'now' : ''; return `<span class="rchip ${st}" title="${esc(t)}">${g ? (g.ok ? '✓' : '✗') : i + 1 === cur ? '▶' : ''} ${i + 1}. ${esc(t)}</span>`; }).join('');
+  const hist = TSA_STEPS.map((t, i) => {
+    if (i + 1 >= cur && cur <= 8) return '';
+    const items = s.hist.filter(h => h.step === i + 1 && h.kind !== 'agent');
+    return items.length ? `<details class="exhibit"><summary>Step ${i + 1}: ${esc(t)} ${s.grades[i + 1] ? (s.grades[i + 1].ok ? '<span class="up">✓</span>' : '<span class="down">✗</span>') : ''}</summary>${items.map(h => `<p class="small" style="margin:4px 0">${h.kind === 'you' ? '<b>You:</b> ' : '<b>Agent:</b> '}${esc(h.text)}</p>`).join('')}</details>` : '';
+  }).join('');
+  return `<section class="card">
+    <div class="thead"><div class="t"><div class="small muted" style="font-weight:700">TOPIC ${TOPICS.length + 1} OF ${TOPICS.length + 1} · STEPWISE LAB</div><h2>Time Series Analysis (ARIMA)</h2><p class="role"><b>Your role:</b> You are the demand planner. Work through the Box–Jenkins steps one decision at a time: visualise, test stationarity, transform, read the ACF and PACF, fit candidate ARIMA models and choose the one to forecast with. The Analytics Agent runs only the analyses you ask for, checks each decision, and waits for your next input.</p></div></div>
+    <details class="learn"><summary>Concept &amp; formulas</summary><div class="learn-grid"><div>
+      <p><b>Stationarity</b> (required before ARIMA): constant mean, constant variance, and only white noise left in the residuals. Trend and seasonality make a series non-stationary.</p>
+      <p><b>ADF test</b>: H₀ = unit root (non-stationary). p &gt; 0.05 → non-stationary → difference and re-test.</p>
+      <p><b>Identification</b>: PACF significant for the first p lags then cuts off, with the ACF decaying → AR(p). ACF significant for the first q lags then cuts off → MA(q). Both decay → ARMA(p,q).</p>
+      <p><b>Selection</b>: lower AIC/BIC = better fit vs complexity (BIC penalises parameters more). Lower MAPE/RMSE on held-out data = better forecasts. For forecasting, give out-of-sample accuracy priority; treat an AIC difference above 10 as substantial; prefer the simpler model if accuracy is similar.</p></div>
+      <div class="formula"><div><b>First difference</b>Δyₜ = yₜ − yₜ₋₁</div><div><b>ADF regression</b>Δyₜ = α + γ·yₜ₋₁ + Σ δᵢ·Δyₜ₋ᵢ + εₜ,  H₀: γ = 0</div><div><b>ACF at lag k</b>rₖ = Σ(yₜ−ȳ)(yₜ₊ₖ−ȳ) ÷ Σ(yₜ−ȳ)²</div><div><b>AR(p)</b>yₜ = c + φ₁yₜ₋₁ + … + φₚyₜ₋ₚ + εₜ</div><div><b>MA(q)</b>yₜ = c + εₜ + θ₁εₜ₋₁ + … + θ_qεₜ₋q</div><div><b>ARIMA(p,d,q)</b>ARMA(p,q) on the d-times differenced series</div><div><b>AIC / BIC</b>2k − 2 ln L  /  k ln n − 2 ln L</div><div><b>MAPE</b>(100/n) Σ |yₜ − ŷₜ| ÷ yₜ</div></div></div></details>
+  </section>
+  <section class="card" id="caseData"><details open><summary class="case-sum"><h3 style="display:inline-flex;margin:0">📋 Case data</h3><span class="small muted"> the full series · click to collapse</span></summary>
+    <div class="actions"><select id="tsaDs" class="tsa-sel">${TS_IDS.map(id => `<option value="${id}" ${!s.mystery && s.ds === id ? 'selected' : ''}>${esc(TS_SETS[id].name)}</option>`).join('')}<option value="mystery" ${s.mystery ? 'selected' : ''}>Mystery dataset (process hidden)</option></select><button class="btn small" id="tsaNewSample">🎲 New sample</button><span class="small muted">Changing the dataset restarts the lab.</span></div>
+    <p class="case-brief">${s.mystery ? 'A daily operations series from one of our partner organisations. Its source and generating process stay hidden until the debrief.' : esc(TS_SETS[s.ds].story)} You have ${TS_N} daily observations (${tsDate(0)} to ${tsDate(TS_N - 1)}). Days 1–${TS_N - TS_TEST} are the training set; the last ${TS_TEST} days (${tsDate(TS_N - TS_TEST)} onwards) are held out as the test set for judging forecasts. Sample ${s.seed}.</p>
+    <div class="ex-sum"><span><b>Observations:</b> ${TS_N}</span><span><b>Mean:</b> ${n2(mean(y))}</span><span><b>Std. dev.:</b> ${n2(stdev(y))}</span><span><b>Min:</b> ${Math.min(...y)}</span><span><b>Max:</b> ${Math.max(...y)}</span><span><b>Unit:</b> ${esc(tsaUnit())} per day</span></div>
+    <details class="exhibit"><summary>Exhibit 1: the full daily series (${TS_N} rows)</summary><div class="tsa-table"><table class="tbl ex"><thead><tr><th>Day</th><th>Date</th><th class="n">Value</th><th>Set</th></tr></thead><tbody>${y.map((v, i) => `<tr><td>${i + 1}</td><td>${tsDate(i)}</td><td class="n">${v}</td><td>${i < TS_N - TS_TEST ? 'train' : 'test'}</td></tr>`).join('')}</tbody></table></div></details>
+    <div class="actions"><button class="btn small" id="tsaCsv">⬇ Download series (CSV)</button><span class="small muted">Columns: Date, Value, Set. Try the same steps in Python (statsmodels) and compare: the ADF, ACF and PACF figures match.</span></div></details></section>
+  <section class="card"><h3>Stepwise analysis<span class="sub">${cur <= 8 ? `Step ${cur} of 8 · the agent is waiting for you` : 'Complete'}</span></h3>
+    <div class="rchips">${chips}</div>
+    ${hist ? `<div style="margin-top:10px">${hist}</div>` : ''}
+    ${cur <= 8 ? `<div class="tsa-step"><h3 style="margin-top:4px">Step ${cur}: ${esc(TSA_STEPS[cur - 1])}</h3>${tsaStepBody()}
+      ${cur !== 7 ? `<div class="actions"><button class="btn primary" id="tsaSubmit">Submit decision →</button><span class="err" id="tsaErr"></span></div>` : ''}</div>` : tsaFinalHTML()}
+    <div class="actions"><button class="btn ghost small" id="tsaRestart">↺ Restart this dataset</button></div></section>`;
+}
+function bindTSA() {
+  const s = state.tsa, o = s.out, on = (id, fn) => { const el = $('#' + id); if (el) el.onclick = fn; };
+  on('tsaSubmit', tsaSubmit);
+  on('tsaRolling', () => { o.rolling = true; tsaSay('Added the 30-day rolling mean and standard deviation. A stationary series has a flat rolling mean and a steady rolling std.'); render(); });
+  on('tsaHalves', () => { const y = tsaY(), h = Math.floor(TS_N / 2); o.halves = [['Days 1–' + h, mean(y.slice(0, h)), stdev(y.slice(0, h))], [`Days ${h + 1}–${TS_N}`, mean(y.slice(h)), stdev(y.slice(h))]]; tsaSay(`First half: mean ${n2(o.halves[0][1])}, std ${n2(o.halves[0][2])}. Second half: mean ${n2(o.halves[1][1])}, std ${n2(o.halves[1][2])}.`); render(); });
+  on('tsaAdf0', () => { o.adf0 = adfTest(tsaY()); tsaSay(`ADF on y: statistic ${o.adf0.stat.toFixed(3)}, p-value ${fmtP(o.adf0.p)}, ${o.adf0.lags} lags (AIC), ${o.adf0.nobs} observations.`); render(); });
+  on('tsaAdfT', () => { o.adfT = adfTest(tsaSeries()); tsaSay(`ADF on ${tsaLabel()}: statistic ${o.adfT.stat.toFixed(3)}, p-value ${fmtP(o.adfT.p)}.`); render(); });
+  on('tsaCorr', () => {
+    s.lags = +$('#tsaLags').value; const w = tsaSeries(), isA = s.step === 5;
+    const vals = isA ? acf(w, s.lags) : pacf(w, s.lags), bands = isA ? acfBands(vals, w.length) : vals.map(() => 1.96 / Math.sqrt(w.length));
+    o[isA ? 'acf' : 'pacf'] = {vals, bands, pat: corrPattern(vals, bands)};
+    tsaSay(`Plotted the ${isA ? 'ACF (Bartlett 95% band)' : 'PACF (95% band ±1.96/√n)'} of ${tsaLabel()} for ${s.lags} lags.`); render();
+  });
+  on('tsaBack3', () => { s.d = 0; s.log = false; o.adfT = o.acf = o.pacf = null; delete s.grades[3]; delete s.grades[4]; delete s.grades[5]; delete s.grades[6]; s.step = 3; tsaSay('Back to Step 3: choose a transformation again.'); render(); });
+  on('tsaFit', () => {
+    const specs = [1, 2, 3].filter(k => k === 1 || $('#tsaUse' + k).checked).map(k => [+$('#tsaP' + k).value, +$('#tsaD' + k).value, +$('#tsaQ' + k).value]);
+    const uniq = specs.filter((m, i) => specs.findIndex(x => x.join() === m.join()) === i);
+    s.fits = uniq.map(([p, d, q]) => tsEvaluate(tsaY(), p, d, q, s.log));
+    const bA = s.fits.reduce((a, b) => (b.aic < a.aic ? b : a)), bM = s.fits.reduce((a, b) => (b.mape < a.mape ? b : a));
+    tsaSay(`Fitted ${s.fits.map(f => f.label).join(', ')} on days 1–${TS_N - TS_TEST} and forecast the test period. Lowest AIC: ${bA.label} (${n2(bA.aic)}). Lowest test MAPE: ${bM.label} (${bM.mape.toFixed(2)}%).`);
+    render();
+  });
+  on('tsaTo8', () => { s.step = 8; render(); });
+  on('tsaRestart', () => { tsaNew(s.mystery ? 'mystery' : s.ds, s.seed); render(); });
+  on('tsaAgain', () => { tsaNew(s.mystery ? 'mystery' : s.ds, s.seed + 1); render(); });
+  on('tsaMystery', () => { tsaNew('mystery', s.seed + 7); render(); });
+  on('tsaNewSample', () => { tsaNew(s.mystery ? 'mystery' : s.ds, s.seed + 1); render(); });
+  const ds = $('#tsaDs'); if (ds) ds.onchange = () => { tsaNew(ds.value, 1); render(); };
+  on('tsaCsv', () => {
+    const y = tsaY(), csv = ['Date,Value,Set', ...y.map((v, i) => `${tsDate(i)},${v},${i < TS_N - TS_TEST ? 'train' : 'test'}`)].join('\r\n');
+    const url = URL.createObjectURL(new Blob([csv], {type: 'text/csv'})), a = document.createElement('a');
+    a.href = url; a.download = `opslab-timeseries-${s.mystery ? 'mystery' : s.ds}-sample${s.seed}.csv`; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 2000);
+  });
+}
+function renderTSAAgent() {
+  const s = state.tsa; if (!s) return;
+  const graded = Object.values(s.grades), ok = graded.filter(g => g.ok).length;
+  const tools = {1: ['Rolling mean & std', 'First-half vs second-half statistics'], 2: ['ADF test on y'], 3: ['Apply your chosen transformation'], 4: ['ADF test on the transformed series'], 5: ['ACF plot (10–40 lags)'], 6: ['PACF plot (10–40 lags)'], 7: ['Fit up to 3 ARIMA models, forecast the test set'], 8: ['Compare fitted models']}[s.step] || [];
+  const items = s.hist.slice(-14).reverse();
+  $('#side').innerHTML = `<div class="card"><div class="ai-head"><div class="ai-badge">AI</div><div><h3>Analytics Agent</h3><p><span class="status-dot" style="background:${s.step <= 8 ? 'var(--warn)' : 'var(--good)'}"></span>${s.step <= 8 ? 'Waiting for your input' : 'Lab complete'} · rule-based (no LLM)</p></div></div>
+    ${s.step <= 8 ? `<div class="ai-section"><div class="rec"><div class="name">⏸ Step ${s.step}: ${esc(TSA_STEPS[s.step - 1])}</div><p class="small" style="margin:4px 0 0">I won't move ahead or give the answer. Ask me for analysis, then submit your decision.</p>${tools.length ? `<div class="small" style="margin-top:6px"><b>Analyses I can run now:</b><ul class="clean">${tools.map(t => `<li>${esc(t)}</li>`).join('')}</ul></div>` : ''}</div></div>` : ''}
+    <div class="ai-section"><h4>Decisions checked</h4><div class="score"><div><div class="big">${ok}/${graded.length || 0}</div><div class="small muted">correct so far</div></div><div style="flex:1"><div class="meter"><i style="width:${graded.length ? ok / graded.length * 100 : 0}%"></i></div></div></div></div>
+    <div class="ai-section"><h4>Analysis log (newest first)</h4>${items.map(h => `<div class="issue ${h.kind === 'verdict' ? (h.ok ? 'ok' : 'high') : ''}" ${h.kind === 'you' ? 'style="border-style:dashed"' : ''}><span class="ic">${h.kind === 'you' ? '🧑' : h.kind === 'verdict' ? (h.ok ? '✓' : '!') : '⚙'}</span><div class="small">${h.kind === 'you' ? '<b>You</b> ' : ''}${esc(h.text.replace(/^[✓✗] /, ''))}</div></div>`).join('')}</div>
+    <p class="small muted" style="margin:6px 0 0">All statistics are computed in your browser and match Python's statsmodels (adfuller, acf, pacf). The live LLM chat is available on topics 1–7.</p></div>` + activityCard();
 }
 
 /* ---------------- boot ---------------- */

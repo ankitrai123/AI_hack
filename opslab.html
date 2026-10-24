@@ -2444,19 +2444,9 @@ Rules:
 - Make the numbers match the story (a festive peak raises demand; a strike lengthens lead times).
 - Make the case teach the topic's concept: the standard decision should no longer be the best one.
 - Keep text plain and short. Do not quote KPIs or results: the simulator computes those.`;
-function scenarioSpec(t) {
-  return t.params.filter(x => x.role === 'scenario').map(x => {
-    const d = {id: x.id, label: x.label};
-    if (x.unit) d.unit = x.unit;
-    if (x.type === 'jobs') { d.type = 'array of {id, p, d}: processing days p (1–30) and due day d (1–120) for jobs ' + x.def.map(j => j.id).join(', '); d.default = x.def; }
-    else if (x.type === 'select') { d.options = x.options.map(o => o[0]); d.default = x.def; }
-    else if (x.type === 'checkbox') { d.type = 'boolean'; d.default = x.def; }
-    else Object.assign(d, {min: x.min, max: x.max, step: x.step, default: x.def});
-    if (x.help) d.note = x.help;
-    return d;
-  });
-}
-async function llmText(system, user) {
+// Providers whose OpenAI-compatible API accepts response_format JSON mode (switched off automatically if refused).
+const JSON_MODE = {ollama: true, openai: true, groq: true, gemini: true};
+async function llmText(system, user, opts = {}) {
   const a = activeLLM();
   if (a.format === 'anthropic') {
     const body = {model: a.model, max_tokens: 8000, system, messages: [{role: 'user', content: user}]};
@@ -2468,18 +2458,87 @@ async function llmText(system, user) {
   }
   const body = {model: a.model, messages: [{role: 'system', content: system}, {role: 'user', content: user}]};
   body[a.maxField || 'max_tokens'] = 4000;
+  const useJson = opts.json && JSON_MODE[a.id];
+  if (useJson) body.response_format = {type: 'json_object'};
   const headers = {'content-type': 'application/json'};
   if (a.key) headers.authorization = 'Bearer ' + a.key;
-  const res = await postJSON(a, endpoint(a, '/chat/completions'), headers, body);
+  let res;
+  try { res = await postJSON(a, endpoint(a, '/chat/completions'), headers, body); }
+  catch (e) {
+    if (!(useJson && e.status === 400 && /response_format|json/i.test(e.detail || e.message))) throw e;
+    JSON_MODE[a.id] = false; delete body.response_format;
+    res = await postJSON(a, endpoint(a, '/chat/completions'), headers, body);
+  }
   const m = res.choices && res.choices[0] && res.choices[0].message || {};
   const txt = typeof m.content === 'string' ? m.content : Array.isArray(m.content) ? m.content.map(p => p.text || '').join('') : '';
   return txt.replace(/<think>[\s\S]*?<\/think>/g, '');
 }
+// Repairs the JSON slips small models make: missing or trailing commas, unescaped quotes or line breaks
+// inside strings, comments, smart quotes, Python literals, and output cut off before the closing brackets.
+function repairJSON(src) {
+  let out = '', inStr = false, prev = '', gap = false;
+  const stack = [];
+  const valEnd = c => c === '"' || c === '}' || c === ']' || /[0-9a-zA-Z.]/.test(c);
+  for (let i = 0; i < src.length; i++) {
+    let c = src[i];
+    if (inStr) {
+      if (c === '\\') { out += c + (src[i + 1] ?? ''); i++; continue; }
+      if (c === '\n') { out += '\\n'; continue; }
+      if (c === '\r') continue;
+      if (c === '\t') { out += '\\t'; continue; }
+      if (c === '"' || c === '”') {
+        let j = i + 1; while (j < src.length && /\s/.test(src[j])) j++;
+        const nx = src[j];
+        if (nx === undefined || ',:}]'.includes(nx) || (nx === '"' && j > i + 1)) { inStr = false; out += '"'; prev = '"'; gap = false; continue; }
+        out += '\\"'; continue;
+      }
+      out += c; continue;
+    }
+    if (c === '/' && src[i + 1] === '/') { while (i < src.length && src[i] !== '\n') i++; gap = true; continue; }
+    if (c === '/' && src[i + 1] === '*') { const e = src.indexOf('*/', i + 2); if (e < 0) break; i = e + 1; gap = true; continue; }
+    if (/\s/.test(c)) { out += c; gap = true; continue; }
+    if (c === '“' || c === '”') c = '"';
+    for (const [py, js] of [['True', 'true'], ['False', 'false'], ['None', 'null']]) if (src.startsWith(py, i) && !/[A-Za-z0-9_]/.test(src[i + py.length] || '')) { c = js; i += py.length - 1; break; }
+    const valStart = c[0] === '"' || c[0] === '{' || c[0] === '[' || /[-0-9tfn]/.test(c[0]);
+    if (valStart && prev && (('"}]'.includes(prev)) || (gap && /[0-9a-zA-Z.]/.test(prev))) && valEnd(prev)) out = out.replace(/\s*$/, m => ',' + m);
+    if (c === '}' || c === ']') { out = out.replace(/,(\s*)$/, '$1'); stack.pop(); }
+    if (c === '{' || c === '[') stack.push(c === '{' ? '}' : ']');
+    if (c === '"') inStr = true;
+    out += c; prev = c[c.length - 1]; gap = false;
+  }
+  if (inStr) out += '"';
+  out = out.replace(/,(\s*)$/, '$1').replace(/:\s*$/, ': null');
+  while (stack.length) out += stack.pop();
+  return out;
+}
+// Extracts the first JSON object from a model reply and parses it, repairing it if needed.
 function parseJSONLoose(txt) {
-  const s = String(txt).replace(/```(?:json)?/gi, '');
-  const i = s.indexOf('{'), j = s.lastIndexOf('}');
-  if (i < 0 || j <= i) throw new Error('no JSON object found');
-  return JSON.parse(s.slice(i, j + 1));
+  const s = String(txt).replace(/<think>[\s\S]*?<\/think>/g, '').replace(/```(?:json|JSON)?/g, '');
+  const i = s.indexOf('{');
+  if (i < 0) throw new Error('no JSON object found');
+  const j = s.lastIndexOf('}');
+  if (j > i) { try { return JSON.parse(s.slice(i, j + 1)); } catch (e) {} }
+  const fixed = repairJSON(s.slice(i));
+  // keep only the first complete object (models sometimes add notes after it)
+  let depth = 0, inStr = false, end = fixed.length;
+  for (let k = 0; k < fixed.length; k++) {
+    const c = fixed[k];
+    if (inStr) { if (c === '\\') k++; else if (c === '"') inStr = false; continue; }
+    if (c === '"') inStr = true; else if (c === '{' || c === '[') depth++; else if (c === '}' || c === ']') { depth--; if (depth === 0) { end = k + 1; break; } }
+  }
+  const first = fixed.slice(0, end);
+  try { return JSON.parse(first); } catch (err) {
+    // Output was probably cut off: drop the last incomplete item and close the brackets again.
+    let cut = s.slice(i);
+    for (let n = 0; n < 40; n++) {
+      let k = cut.length - 1, depth = 0, q = false, pos = -1;
+      for (let m = 0; m < cut.length; m++) { const c = cut[m]; if (q) { if (c === '\\') m++; else if (c === '"') q = false; continue; } if (c === '"') q = true; else if (c === ',') pos = m; }
+      if (pos < 0) break;
+      cut = cut.slice(0, pos);
+      try { return JSON.parse(repairJSON(cut)); } catch (e) {}
+    }
+    throw err;
+  }
 }
 // Validate a proposed set of scenario changes: unknown ids and decision inputs are dropped, numbers fitted to range.
 function validScenario(t, changes) {
@@ -2496,21 +2555,35 @@ function validScenario(t, changes) {
   return {scen, notes};
 }
 const shortText = (v, n) => String(v || '').replace(/\s+/g, ' ').trim().slice(0, n);
+// Compact one-line-per-input spec keeps prompts short enough for small local models.
+function scenarioSpecLines(t) {
+  return t.params.filter(x => x.role === 'scenario').map(x => {
+    const u = x.unit ? ` [${x.unit}]` : '';
+    if (x.type === 'jobs') return `${x.id}: ${x.label}. Array of {"id","p","d"} for jobs ${x.def.map(j => j.id).join(',')}; p = processing days 1-30, d = due day 1-120. Default ${JSON.stringify(x.def)}`;
+    if (x.type === 'select') return `${x.id}: ${x.label}. One of ${x.options.map(o => o[0]).join(', ')}. Default ${x.def}`;
+    if (x.type === 'checkbox') return `${x.id}: ${x.label}. true or false. Default ${x.def}`;
+    return `${x.id}: ${x.label}${u}. ${x.min} to ${x.max}, step ${x.step}. Default ${x.def}`;
+  });
+}
 async function askScenarioAgent(t, task, extra, check) {
-  const user = JSON.stringify({task, topic: t.name, manager_role: t.role, concept: stripHtml(t.concept), scenario_inputs: scenarioSpec(t),
-    decision_inputs_do_not_change: t.params.filter(x => x.role === 'decision').map(x => `${x.id}: ${x.label}`), ...extra});
-  let lastErr = null;
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const txt = await llmText(SCEN_SYSTEM, attempt ? user + '\n\nYour previous reply could not be used (' + lastErr + '). Reply with the JSON object only.' : user);
-    try { const obj = parseJSONLoose(txt); return check(obj); } catch (e) { lastErr = e.message; }
+  const user = [`TASK: ${task}`, `TOPIC: ${t.name}. ${t.role}`, `CONCEPT: ${stripHtml(t.concept).slice(0, 450)}`,
+    'SCENARIO INPUTS (id: meaning, range, default):', ...scenarioSpecLines(t).map(l => '- ' + l),
+    `DECISION INPUTS (never include): ${t.params.filter(x => x.role === 'decision').map(x => x.id).join(', ')}`,
+    ...Object.entries(extra).filter(([, v]) => v !== undefined).map(([k, v]) => `${k.toUpperCase().replace(/_/g, ' ')}: ${typeof v === 'string' ? v : JSON.stringify(v)}`),
+    'Reply with the JSON object only.'].join('\n');
+  let lastErr = null, lastTxt = '';
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const prompt = attempt === 0 ? user : `${user}\n\nYOUR PREVIOUS REPLY:\n${lastTxt.slice(0, 3000)}\n\nIt could not be used: ${lastErr}. Return the corrected, complete JSON object only: double quotes around every key and string, commas between items, no comments.`;
+    lastTxt = await llmText(SCEN_SYSTEM, prompt, {json: true});
+    try { return check(parseJSONLoose(lastTxt)); } catch (e) { lastErr = e.message; }
   }
-  throw new Error('The model did not return a usable scenario (' + lastErr + '). Try again, pick another model, or use Random case.');
+  throw new Error(`The model's reply was not valid JSON even after automatic repair and two correction attempts (${lastErr}). Small local models sometimes struggle with long outputs: try again, choose fewer rounds, use a larger model (e.g. qwen2.5:14b), or use the standard script / Random case.`);
 }
 async function generateCase(t, theme) {
   const a = activeLLM();
   return askScenarioAgent(t, 'Write ONE case for a single simulation run.', {
     instructor_request: theme || 'none: choose an interesting, realistic situation',
-    output_format: {title: 'short case title (max 8 words)', story: '2–4 sentences, max 80 words: the company, the industry and what is happening', changes: 'object mapping scenario input id to its new value; include only the inputs you change (3–6 is typical)'}
+    json_shape: '{"title": "max 8 words", "story": "2-4 sentences, max 80 words: the company, the industry and what is happening", "changes": {"<scenario id>": <new value>, ...}} with only the inputs you change (3-6 is typical)'
   }, obj => {
     const {scen, notes} = validScenario(t, obj.changes);
     if (!Object.keys(obj.changes || {}).length) throw new Error('no scenario changes');
@@ -2523,7 +2596,7 @@ async function generateCampaign(t, period, n, theme) {
     rounds: Array.from({length: n}, (_, k) => roundLabel(period, k)),
     instructor_request: theme || 'none: choose a realistic storyline',
     hidden_inputs: (CAMPAIGN[t.id].hidden || []).length ? `Students cannot see ${CAMPAIGN[t.id].hidden.join(', ')} before playing: describe only the risk in "events" and the actual outcome in "reveal".` : undefined,
-    output_format: {title: 'campaign title (max 8 words)', story: '2–3 sentences setting the scene', rounds: `array of exactly ${n} objects: {events: [1–2 short sentences the manager reads before deciding], reveal: [optional sentence shown after the round], changes: {scenario input id: value} as absolute values for that round}`}
+    json_shape: `{"title": "max 8 words", "story": "2-3 sentences", "rounds": [ exactly ${n} objects like {"events": "1-2 short sentences the manager reads before deciding", "reveal": "optional sentence shown after the round", "changes": {"<scenario id>": <value>}} ]}. Values in changes are absolute values for that round.`
   }, obj => {
     if (!Array.isArray(obj.rounds) || !obj.rounds.length) throw new Error('no rounds');
     const notes = [], rounds = [];

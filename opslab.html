@@ -118,6 +118,8 @@ details.learn[open] summary::before{content:"▾ "}
 table.jobs{border-collapse:collapse;width:100%;font-size:12.5px}
 table.jobs th,table.jobs td{padding:3px 6px;text-align:left;border-bottom:1px solid var(--line)}
 table.jobs input{width:64px}
+.scen-agent{border:1px dashed var(--accent);border-radius:10px;padding:10px 12px;margin:8px 0 4px;background:color-mix(in srgb,var(--accent) 4%,var(--panel))}
+.scen-head{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}
 .seg{display:inline-flex;margin-top:12px;border:1px solid var(--line);border-radius:10px;overflow:hidden}
 .seg button{border:0;background:var(--panel);color:var(--ink);padding:7px 14px;font-weight:600;font-size:13px}
 .seg button.on{background:var(--accent);color:var(--accent-ink)}
@@ -1406,8 +1408,8 @@ function stackedBars({categories, stacks, fmt = F.money, axis = v => '$' + short
 
 /* ---------------- 5. UI & state ---------------- */
 const defaults = t => Object.fromEntries(t.params.map(x => [x.id, JSON.parse(JSON.stringify(x.def))]));
-const state = {view: 'bottleneck', inputs: {}, runs: {}, adviceOpen: {}, history: [], errors: {}, mode: {}, camp: {}};
-function resetState() { TOPICS.forEach(t => { state.inputs[t.id] = defaults(t); state.runs[t.id] = []; state.adviceOpen[t.id] = false; state.mode[t.id] = 'single'; state.camp[t.id] = null; }); state.history = []; }
+const state = {view: 'bottleneck', inputs: {}, runs: {}, adviceOpen: {}, history: [], errors: {}, mode: {}, camp: {}, cases: {}};
+function resetState() { TOPICS.forEach(t => { state.inputs[t.id] = defaults(t); state.runs[t.id] = []; state.adviceOpen[t.id] = false; state.mode[t.id] = 'single'; state.camp[t.id] = null; state.cases[t.id] = null; }); state.history = []; }
 resetState();
 const lastParams = id => state.inputs[id];
 const lastRun = id => state.runs[id][state.runs[id].length - 1];
@@ -1455,7 +1457,7 @@ function renderTopic(t) {
   const p = state.inputs[t.id], runs = state.runs[t.id], run = lastRun(t.id);
   const isCamp = state.mode[t.id] === 'campaign', camp = state.camp[t.id];
   const campActive = isCamp && camp && camp.rounds.length < camp.n, campDone = isCamp && camp && camp.rounds.length >= camp.n;
-  const nextRound = campActive ? campaignRound(t, camp.period, camp.rounds.length) : null;
+  const nextRound = campActive ? roundFor(t, camp, camp.rounds.length) : null;
   const dec = t.params.filter(x => x.role === 'decision'), scn = t.params.filter(x => x.role === 'scenario');
   const learnOpen = runs.length === 0 ? 'open' : '';
   let html = `<section class="card">
@@ -1471,6 +1473,7 @@ function renderTopic(t) {
       <div class="ingroup">Decisions <span class="tag dec">you control</span></div>
       ${dec.map(x => fieldHTML(t, x, p)).join('')}
       <div class="ingroup">Scenario <span class="tag scn">${isCamp && camp ? 'set by the round' : 'environment'}</span></div>
+      ${!isCamp ? `<div style="grid-column:1/-1">${caseHTML(t)}</div>` : ''}
       ${scn.map(x => campActive && nextRound.hidden.includes(x.id) ? `<div class="field locked"><label><span>${esc(x.label)}</span>${x.unit ? `<span class="u">${esc(x.unit)}</span>` : ''}</label><div class="small muted" style="padding:6px 0">Unknown until you play this round</div></div>` : fieldHTML(t, x, p, isCamp && !!camp)).join('')}
     </div>
     <div class="actions">
@@ -1593,15 +1596,20 @@ function activityCard() {
   return `<div class="card"><h3>Agent activity log<span class="sub">all topics</span></h3>${items.length ? `<div class="log">${items.map(h => `<div><span class="mono">${h.time.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', second: '2-digit'})}</span> · <b>${esc(h.topic)}</b> ${esc(h.text)}</div>`).join('')}</div>` : '<p class="small muted" style="margin:0">Nothing logged yet.</p>'}</div>`;
 }
 
+function roundFor(t, c, k) {
+  if (!c.custom) return campaignRound(t, c.period, k);
+  const r = c.custom.rounds[k];
+  return {k, label: roundLabel(c.period, k), events: r.events, reveal: r.reveal || [], hidden: CAMPAIGN[t.id].hidden || [], scenario: r.scenario, custom: true};
+}
 function applyRoundScenario(t) {
   const c = state.camp[t.id]; if (!c || c.rounds.length >= c.n) return;
-  Object.assign(state.inputs[t.id], JSON.parse(JSON.stringify(campaignRound(t, c.period, c.rounds.length).scenario)));
+  Object.assign(state.inputs[t.id], JSON.parse(JSON.stringify(roundFor(t, c, c.rounds.length).scenario)));
 }
 function runSimulation(t) {
   const camp = state.mode[t.id] === 'campaign' ? state.camp[t.id] : null;
   if (state.mode[t.id] === 'campaign' && (!camp || camp.rounds.length >= camp.n)) return null;
   const p = readInputs(t);
-  const rd = camp ? campaignRound(t, camp.period, camp.rounds.length) : null;
+  const rd = camp ? roundFor(t, camp, camp.rounds.length) : null;
   if (rd) Object.assign(p, JSON.parse(JSON.stringify(rd.scenario)));
   const err = t.validate ? t.validate(p) : null;
   state.errors[t.id] = err || '';
@@ -1616,7 +1624,7 @@ function runSimulation(t) {
   const run = {n: runs.length + 1, p: snap, r, prev, analysis, changes: changesText(t, prev.p, snap), time: new Date()};
   runs.push(run);
   if (rd) {
-    run.round = {period: camp.period, k: rd.k, label: rd.label};
+    run.round = {period: camp.period, k: rd.k, label: rd.label, custom: !!camp.custom};
     camp.rounds.push({k: rd.k, label: rd.label, events: [...rd.events, ...rd.reveal], p: snap, r, bestP: analysis.best.p, bestR: analysis.best.r,
       value: campaignValue(t, r, snap, camp.period), bestValue: campaignValue(t, analysis.best.r, analysis.best.p, camp.period), eff: analysis.eff});
     applyRoundScenario(t);
@@ -1638,11 +1646,21 @@ function bindInputs(t) {
   const scenarioDefaults = () => { const d = defaults(t); t.params.filter(x => x.role === 'scenario').forEach(x => { state.inputs[t.id][x.id] = d[x.id]; }); };
   $('#modeSingle').onclick = () => { if (state.mode[t.id] === 'single') return; readInputs(t); state.mode[t.id] = 'single'; scenarioDefaults(); render(); };
   $('#modeCamp').onclick = () => { if (state.mode[t.id] === 'campaign') return; readInputs(t); state.mode[t.id] = 'campaign'; applyRoundScenario(t); render(); };
-  const cs = $('#campStart'); if (cs) cs.onclick = () => {
-    readInputs(t); const [period, n] = $('#campPlan').value.split(':');
-    state.camp[t.id] = {period, n: +n, rounds: []}; applyRoundScenario(t);
-    logActivity(t, `Campaign started: ${PERIODS[period].label}, ${n} rounds`); render();
+  const ct = $('#campTheme'); if (ct) ct.addEventListener('input', () => { SCEN.theme['camp-' + t.id] = ct.value; });
+  const cs = $('#campStart'); if (cs) cs.onclick = async () => {
+    readInputs(t); const [period, n] = $('#campPlan').value.split(':'), src = $('#campSource').value;
+    let custom = null;
+    if (src === 'ai') {
+      SCEN.busy = true; SCEN.msg['camp-' + t.id] = {text: `The Scenario Agent is writing ${n} rounds…`}; renderMain();
+      try { custom = await generateCampaign(t, period, +n, (SCEN.theme['camp-' + t.id] || '').trim()); SCEN.msg['camp-' + t.id] = null; }
+      catch (e) { SCEN.msg['camp-' + t.id] = {err: true, text: e.message}; }
+      SCEN.busy = false;
+      if (!custom) { if (state.view === t.id) render(); return; }
+    }
+    state.camp[t.id] = {period, n: +n, rounds: [], custom}; applyRoundScenario(t);
+    logActivity(t, `Campaign started: ${PERIODS[period].label}, ${n} rounds${custom ? ' (Scenario Agent: ' + custom.title + ')' : ''}`); if (state.view === t.id) render();
   };
+  bindCase(t);
   const cn = $('#campNew'); if (cn) cn.onclick = () => { state.camp[t.id] = null; scenarioDefaults(); render(); };
 }
 function campaignHTML(t) {
@@ -1651,15 +1669,21 @@ function campaignHTML(t) {
     <p class="small muted" style="margin-top:0">Manage this operation over several periods. Each round brings new conditions: growth, seasonality, cost changes and shocks. You set your decisions once per round, and decisions carry over to the next round. Each result is scaled to the period (${esc(k.label.toLowerCase())} per ${esc(cfg.unit)} × ${cfg.mult.quarter} per quarter, or × ${cfg.mult.year} per year), and your campaign total is compared with the AI's best plan for every round. The AI benchmark uses hindsight: it optimizes each round knowing exactly what happened, so 100% is not always reachable.</p>
     <div class="actions"><select id="campPlan" aria-label="Campaign length" style="border:1px solid var(--line);background:var(--panel-2);color:var(--ink);border-radius:7px;padding:6px 8px;font:inherit">
       ${Object.entries(PERIODS).flatMap(([id, pp]) => pp.rounds.map(n => `<option value="${id}:${n}">${pp.label}: ${n} ${id === 'quarter' ? 'quarters' : 'years'}${id === 'quarter' ? ` (${n / 4} year${n > 4 ? 's' : ''})` : ''}</option>`)).join('')}
-    </select><button class="btn primary" id="campStart">Start campaign</button></div></section>`;
+    </select>
+    <select id="campSource" aria-label="Round conditions" style="border:1px solid var(--line);background:var(--panel-2);color:var(--ink);border-radius:7px;padding:6px 8px;font:inherit">
+      <option value="std">Rounds: standard script</option><option value="ai" ${llmLive() ? '' : 'disabled'}>Rounds: written by the Scenario Agent${llmLive() ? '' : ' (connect an LLM)'}</option></select>
+    <button class="btn primary" id="campStart" ${SCEN.busy ? 'disabled' : ''}>${SCEN.busy ? 'Scenario Agent is writing rounds…' : 'Start campaign'}</button></div>
+    <input type="text" id="campTheme" placeholder="Optional campaign theme for the Scenario Agent, e.g. “EV battery start-up scaling up in Chennai”" value="${esc(SCEN.theme['camp-' + t.id] || '')}" style="width:100%;margin-top:8px;border:1px solid var(--line);background:var(--panel-2);color:var(--ink);border-radius:9px;padding:7px 9px;font:inherit;font-size:13px">
+    ${SCEN.msg['camp-' + t.id] ? `<div class="msg ${SCEN.msg['camp-' + t.id].err ? 'error' : 'tool'}" style="margin-top:6px">${esc(SCEN.msg['camp-' + t.id].text)}</div>` : ''}
+    <p class="small muted" style="margin:6px 0 0">Scenario Agent campaigns count as practice in a class room; the standard script counts for the leaderboard.</p></section>`;
   const played = c.rounds, done = played.length >= c.n, mult = cfg.mult[c.period], per = c.period === 'quarter' ? 'quarter' : 'year';
   const you = sum(played.map(r => r.value)), ai = sum(played.map(r => r.bestValue));
   const eff = played.length ? Agent.efficiency(t, {[k.key]: you}, {[k.key]: ai}) : null;
   const chips = Array.from({length: c.n}, (_, i) => { const lb = roundLabel(c.period, i); const st = i < played.length ? 'done' : i === played.length ? 'now' : ''; return `<span class="rchip ${st}" title="${esc(lb)}">${i < played.length ? '✓ ' : i === played.length ? '▶ ' : ''}${esc(lb)}${i < played.length ? ` · ${F.pct(played[i].eff)}` : ''}</span>`; }).join('');
   let brief = '';
   if (!done) {
-    const nr = campaignRound(t, c.period, played.length);
-    const prevScen = played.length ? campaignRound(t, c.period, played.length - 1).scenario : paramDefaults(t);
+    const nr = roundFor(t, c, played.length);
+    const prevScen = played.length ? roundFor(t, c, played.length - 1).scenario : paramDefaults(t);
     const diffs = changesText(t, {...state.inputs[t.id], ...prevScen}, {...state.inputs[t.id], ...nr.scenario}).filter(d => d.role === 'scenario' && !nr.hidden.includes(d.id));
     brief = `<div class="rec" style="margin-top:10px"><div class="name">Round ${played.length + 1} of ${c.n}: ${esc(nr.label)}</div>
       ${nr.events.length ? `<ul class="clean small">${nr.events.map(e => `<li>${esc(e)}</li>`).join('')}</ul>` : '<p class="small" style="margin:4px 0">Starting conditions: the standard scenario.</p>'}
@@ -1682,6 +1706,7 @@ function campaignHTML(t) {
       <div class="actions"><button class="btn primary" id="campNew">Start a new campaign</button></div>`;
   }
   return `<section class="card" id="campCard"><h3>Campaign · ${esc(PERIODS[c.period].label)}, ${c.n} rounds<span class="sub">value per ${per} = ${esc(k.label.toLowerCase())} per ${esc(cfg.unit)} × ${mult}</span></h3>
+    ${c.custom ? `<div class="rec" style="margin-bottom:10px"><div class="name">✦ ${esc(c.custom.title)}</div><p class="small" style="margin:4px 0">${esc(c.custom.story)}</p><div class="small muted">${esc(c.custom.source)}${c.custom.notes.length ? ' · adjusted: ' + esc(c.custom.notes.slice(0, 3).join('; ')) : ''}</div></div>` : ''}
     <div class="rchips">${chips}</div>${brief}${tiles}${chart}${table}${summary}
     ${!done ? '<div class="actions"><button class="btn ghost small" id="campNew">Abandon campaign</button></div>' : ''}</section>`;
 }
@@ -1768,6 +1793,8 @@ function guideHTML() {
     <li><b>Queues:</b> Why does going from 4 to 5 servers cut waiting so much more than going from 5 to 6?</li>
     <li><b>Disruption:</b> Set duration to 0. Which strategy wastes the most money? How do you price resilience?</li>
     <li><b>Process time:</b> Why does halving the batch size first cut lead time and then suddenly make it explode? What does SMED change? What share of the lead time is value-added?</li></ul>
+  <h3>Scenario Agent and Ollama</h3>
+  <p>Every topic has a <b>Scenario Agent</b>: type a brief (or leave it empty) and it writes a new case (title, story and scenario values), or a whole campaign when you pick “Rounds: written by the Scenario Agent”. Values are checked against each input's range and decisions are never changed. Without an LLM, <b>Random case</b> generates rule-based variations. For a free model, click <b>Use Ollama</b>. When students use the class server, your laptop's Ollama serves everyone. Use it to give each team a different case, or to localise cases to your students' industries.</p>
   <h3>Campaign mode (quarters or years)</h3>
   <p>Each topic has a <b>Campaign</b> switch. Pick quarterly (4 or 8 quarters) or yearly (3 or 5 years). Every round brings a briefing with new conditions (growth, seasonality, cost changes, a launch, a recall, a supplier shutdown revealed only after the plan is committed). Students set decisions once per round. Results are scaled to the period and summed, and compared with the AI's best plan for each round (a hindsight benchmark). It works well as homework or a team competition: "Who runs the plant best over two years?" In the class room, official campaign rounds count for the leaderboard.</p>
   <h3>How the AI agent works</h3>
@@ -1912,7 +1939,8 @@ function runTool(t, name, input) {
         share_of_best_option: F.pct(run.analysis.eff),
         rule_based_best: {option: run.analysis.best.name, decisions: t.describe(run.analysis.best.p), kpis: kpiDump(t, run.analysis.best.r, run.analysis.best.p)}} : null,
       inputs_differ_from_latest_run: run ? JSON.stringify(run.p) !== JSON.stringify(cur) : null,
-      campaign: state.mode[t.id] === 'campaign' && state.camp[t.id] ? (() => { const c = state.camp[t.id]; const nr = c.rounds.length < c.n ? campaignRound(t, c.period, c.rounds.length) : null;
+      current_case: state.cases[t.id] ? {title: state.cases[t.id].title, story: state.cases[t.id].story, source: state.cases[t.id].source} : null,
+      campaign: state.mode[t.id] === 'campaign' && state.camp[t.id] ? (() => { const c = state.camp[t.id]; const nr = c.rounds.length < c.n ? roundFor(t, c, c.rounds.length) : null;
         return {period: c.period, rounds: c.n, played: c.rounds.map(r => ({round: r.label, decisions: t.describe(r.p), value: fmtV(obj.fmt, r.value), ai_best: fmtV(obj.fmt, r.bestValue), share_of_best: F.pct(r.eff)})),
           next_round: nr ? {round: nr.label, events: nr.events, note: 'Scenario inputs are already set to this round. run_simulation uses them.'} : null,
           value_per_period: `${obj.label} per ${CAMPAIGN[t.id].unit} × ${CAMPAIGN[t.id].mult[c.period]}`}; })() : null}};
@@ -2157,6 +2185,7 @@ function chatHTML(t) {
       <div class="row2"><input type="password" id="llmKey" placeholder="${esc(a.noKey ? 'No key needed' : a.keyHint || 'API key')}" value="${esc(a.key)}" autocomplete="off" aria-label="API key" ${a.noKey ? 'disabled' : ''}></div>
       <div class="row2"><input id="llmBase" placeholder="Base URL, e.g. https://host/v1" value="${esc(a.base)}" aria-label="Base URL" style="flex:1;min-width:150px;border:1px solid var(--line);background:var(--panel-2);color:var(--ink);border-radius:7px;padding:5px 7px;font:inherit;font-size:12px"></div>
       <div class="row2"><label class="small"><input type="checkbox" id="llmProxy" ${a.proxy ? 'checked' : ''}> Use local proxy (${esc(LLM.proxyUrl)})</label></div>
+      <div class="row2"><button class="btn small" id="llmOllama" title="Use a free local model through Ollama">🦙 Use Ollama (free, local)</button>${LLM.ollamaMsg ? `<span class="small ${LLM.ollamaMsg.err ? 'down' : 'muted'}">${esc(LLM.ollamaMsg.text)}</span>` : ''}</div>
       <div class="row2"><label class="small"><input type="checkbox" id="llmRemember" ${LLM.remember ? 'checked' : ''}> Remember keys on this device</label><button class="btn small" id="llmSave">Save</button>${a.key ? '<button class="btn small ghost" id="llmForget">Forget key</button>' : ''}</div>
       <p class="small muted" style="margin:6px 0 0">${a.format === 'anthropic' ? 'Claude Messages API.' : 'OpenAI-compatible chat-completions API with tool calling. Models without tool calling still work: the agent sends pre-computed simulator data instead.'} ${a.browser ? '' : '<b>This provider blocks direct browser calls:</b> run <span class="mono">node tools/llm-proxy.mjs</span> and keep “Use local proxy” ticked. '}${a.id === 'ollama' ? 'Start Ollama with <span class="mono">OLLAMA_ORIGINS="*" ollama serve</span>. ' : ''}Model names change, so check your provider's model list. Keys stay in this browser and go only to the provider (or your local proxy). Use spending-limited keys, and don't tick “Remember” on shared computers.</p>
     </details></div>`;
@@ -2185,6 +2214,7 @@ function bindChat(t) {
     logActivity(t, llmLive() ? `Live LLM enabled (${activeLLM().label} · ${activeLLM().model})` : 'Live LLM settings saved (not connected)');
     LLM.settingsOpen = !llmLive(); renderAI(t);
   };
+  $('#llmOllama').onclick = async () => { LLM.ollamaMsg = {text: 'Connecting…'}; LLM.settingsOpen = true; renderAI(t); LLM.ollamaMsg = await useOllama(); renderAI(t); if (state.view === t.id) renderMain(); };
   $('#llmLoad').onclick = async () => {
     readForm(); const c = LLM.cfg[LLM.provider];
     LLM.modelMsg = {text: 'Loading models…'}; LLM.settingsOpen = true; renderAI(t);
@@ -2223,13 +2253,13 @@ async function submitRun(t, run) {
   const s = ROOM.student; if (!s) return;
   run.sync = 'pending'; updateSyncCell(t, run);
   try {
-    const out = await roomApi(s.server, `/api/rooms/${s.code}/runs`, {method: 'POST', body: {roll: s.roll, token: s.token, topic: t.id, p: run.p, n: run.n, round: run.round ? {period: run.round.period, k: run.round.k} : undefined}});
+    const out = await roomApi(s.server, `/api/rooms/${s.code}/runs`, {method: 'POST', body: {roll: s.roll, token: s.token, topic: t.id, p: run.p, n: run.n, round: run.round && !run.round.custom ? {period: run.round.period, k: run.round.k} : undefined}});
     run.sync = out.recorded && !out.recorded.fair ? 'custom' : 'ok';
     s.standing = {rank: out.rank, of: out.of, score: out.score, perTopic: out.perTopic};
     await flushPending();
   } catch (e) {
     run.sync = 'fail'; run.syncErr = e.message;
-    if (!e.status || e.status >= 500) { s.pending = s.pending || []; s.pending.push({topic: t.id, p: run.p, n: run.n, round: run.round ? {period: run.round.period, k: run.round.k} : undefined}); }
+    if (!e.status || e.status >= 500) { s.pending = s.pending || []; s.pending.push({topic: t.id, p: run.p, n: run.n, round: run.round && !run.round.custom ? {period: run.round.period, k: run.round.k} : undefined}); }
     if (e.status === 401) s.needsRejoin = true;
   }
   saveRoom(); updateSyncCell(t, run); renderRoomPill();
@@ -2399,6 +2429,177 @@ function bindRoom() {
   if (ROOM.prof) { bindDash(); if (!ROOM.dash) loadDashboard(); if (!ROOM.health) roomApi(ROOM.prof.server, '/api/health').then(h => { ROOM.health = h; const el = $('#studentUrl'); if (el && h.studentUrls && h.studentUrls.length) el.innerHTML = h.studentUrls.map(u => `<b class="mono">${esc(u)}</b>`).join(' or '); }).catch(() => {}); startDashTimer(); }
 }
 
+/* ---------------- 9. Scenario Agent ----------------
+   One agent that writes cases for every topic: a single case (title, story, scenario values) or a whole
+   campaign (one briefing + conditions per round). It uses the LLM chosen in Live LLM settings (Claude,
+   NVIDIA, OpenAI, Groq, Gemini, Ollama...). Every value it proposes is validated against the input's
+   range; it can never change decisions. Without an LLM, a rule-based generator makes random cases. */
+const SCEN = {busy: false, msg: {}, theme: {}};
+const stripHtml = h => String(h).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+const SCEN_SYSTEM = `You are the OpsLab Scenario Agent. You write realistic, varied teaching cases for an MBA Operations Management course, set in real-feeling companies and industries (Indian and global settings are welcome).
+Rules:
+- Reply with ONE JSON object only. No prose before or after, no code fences.
+- Change only the scenario inputs listed, using their exact ids. Never include decision inputs.
+- Keep every number within its min–max range and on its step.
+- Make the numbers match the story (a festive peak raises demand; a strike lengthens lead times).
+- Make the case teach the topic's concept: the standard decision should no longer be the best one.
+- Keep text plain and short. Do not quote KPIs or results: the simulator computes those.`;
+function scenarioSpec(t) {
+  return t.params.filter(x => x.role === 'scenario').map(x => {
+    const d = {id: x.id, label: x.label};
+    if (x.unit) d.unit = x.unit;
+    if (x.type === 'jobs') { d.type = 'array of {id, p, d}: processing days p (1–30) and due day d (1–120) for jobs ' + x.def.map(j => j.id).join(', '); d.default = x.def; }
+    else if (x.type === 'select') { d.options = x.options.map(o => o[0]); d.default = x.def; }
+    else if (x.type === 'checkbox') { d.type = 'boolean'; d.default = x.def; }
+    else Object.assign(d, {min: x.min, max: x.max, step: x.step, default: x.def});
+    if (x.help) d.note = x.help;
+    return d;
+  });
+}
+async function llmText(system, user) {
+  const a = activeLLM();
+  if (a.format === 'anthropic') {
+    const body = {model: a.model, max_tokens: 8000, system, messages: [{role: 'user', content: user}]};
+    const headers = {'content-type': 'application/json', 'x-api-key': a.key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true'};
+    if (/^claude-(opus|sonnet)-5|^claude-fable/.test(a.model)) { body.output_config = {effort: 'low'}; body.fallbacks = 'default'; headers['anthropic-beta'] = 'server-side-fallback-2026-07-01'; }
+    const res = await postJSON(a, endpoint(a, '/messages'), headers, body);
+    if (res.stop_reason === 'refusal') throw new Error('The model declined to write this scenario. Try a different theme.');
+    return res.content.filter(b => b.type === 'text').map(b => b.text).join('\n');
+  }
+  const body = {model: a.model, messages: [{role: 'system', content: system}, {role: 'user', content: user}]};
+  body[a.maxField || 'max_tokens'] = 4000;
+  const headers = {'content-type': 'application/json'};
+  if (a.key) headers.authorization = 'Bearer ' + a.key;
+  const res = await postJSON(a, endpoint(a, '/chat/completions'), headers, body);
+  const m = res.choices && res.choices[0] && res.choices[0].message || {};
+  const txt = typeof m.content === 'string' ? m.content : Array.isArray(m.content) ? m.content.map(p => p.text || '').join('') : '';
+  return txt.replace(/<think>[\s\S]*?<\/think>/g, '');
+}
+function parseJSONLoose(txt) {
+  const s = String(txt).replace(/```(?:json)?/gi, '');
+  const i = s.indexOf('{'), j = s.lastIndexOf('}');
+  if (i < 0 || j <= i) throw new Error('no JSON object found');
+  return JSON.parse(s.slice(i, j + 1));
+}
+// Validate a proposed set of scenario changes: unknown ids and decision inputs are dropped, numbers fitted to range.
+function validScenario(t, changes) {
+  const clean = {}, notes = [];
+  Object.entries(changes && typeof changes === 'object' ? changes : {}).forEach(([id, v]) => {
+    const x = t.params.find(q => q.id === id);
+    if (!x) { notes.push(`ignored unknown input "${id}"`); return; }
+    if (x.role !== 'scenario') { notes.push(`ignored decision input "${id}"`); return; }
+    clean[id] = v;
+  });
+  const {p, errors} = applyChanges(t, defaults(t), clean, 'scenario');
+  errors.forEach(e => notes.push(e.replace(/^Note: /, '')));
+  const scen = {}; t.params.filter(x => x.role === 'scenario').forEach(x => { scen[x.id] = p[x.id]; });
+  return {scen, notes};
+}
+const shortText = (v, n) => String(v || '').replace(/\s+/g, ' ').trim().slice(0, n);
+async function askScenarioAgent(t, task, extra, check) {
+  const user = JSON.stringify({task, topic: t.name, manager_role: t.role, concept: stripHtml(t.concept), scenario_inputs: scenarioSpec(t),
+    decision_inputs_do_not_change: t.params.filter(x => x.role === 'decision').map(x => `${x.id}: ${x.label}`), ...extra});
+  let lastErr = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const txt = await llmText(SCEN_SYSTEM, attempt ? user + '\n\nYour previous reply could not be used (' + lastErr + '). Reply with the JSON object only.' : user);
+    try { const obj = parseJSONLoose(txt); return check(obj); } catch (e) { lastErr = e.message; }
+  }
+  throw new Error('The model did not return a usable scenario (' + lastErr + '). Try again, pick another model, or use Random case.');
+}
+async function generateCase(t, theme) {
+  const a = activeLLM();
+  return askScenarioAgent(t, 'Write ONE case for a single simulation run.', {
+    instructor_request: theme || 'none: choose an interesting, realistic situation',
+    output_format: {title: 'short case title (max 8 words)', story: '2–4 sentences, max 80 words: the company, the industry and what is happening', changes: 'object mapping scenario input id to its new value; include only the inputs you change (3–6 is typical)'}
+  }, obj => {
+    const {scen, notes} = validScenario(t, obj.changes);
+    if (!Object.keys(obj.changes || {}).length) throw new Error('no scenario changes');
+    return {title: shortText(obj.title, 80) || 'Generated case', story: shortText(obj.story || obj.narrative, 600), scenario: scen, notes, source: `Scenario Agent · ${a.label} · ${a.model}`};
+  });
+}
+async function generateCampaign(t, period, n, theme) {
+  const a = activeLLM();
+  return askScenarioAgent(t, `Write a ${n}-round campaign, one round per ${period}. Conditions should evolve realistically (trends, seasonality, shocks, recovery) and differ between rounds.`, {
+    rounds: Array.from({length: n}, (_, k) => roundLabel(period, k)),
+    instructor_request: theme || 'none: choose a realistic storyline',
+    hidden_inputs: (CAMPAIGN[t.id].hidden || []).length ? `Students cannot see ${CAMPAIGN[t.id].hidden.join(', ')} before playing: describe only the risk in "events" and the actual outcome in "reveal".` : undefined,
+    output_format: {title: 'campaign title (max 8 words)', story: '2–3 sentences setting the scene', rounds: `array of exactly ${n} objects: {events: [1–2 short sentences the manager reads before deciding], reveal: [optional sentence shown after the round], changes: {scenario input id: value} as absolute values for that round}`}
+  }, obj => {
+    if (!Array.isArray(obj.rounds) || !obj.rounds.length) throw new Error('no rounds');
+    const notes = [], rounds = [];
+    for (let k = 0; k < n; k++) {
+      const r = obj.rounds[Math.min(k, obj.rounds.length - 1)] || {};
+      const v = validScenario(t, r.changes); v.notes.forEach(x => notes.push(`${roundLabel(period, k)}: ${x}`));
+      const ev = (Array.isArray(r.events) ? r.events : [r.events]).filter(Boolean).map(e => shortText(e, 220)).slice(0, 3);
+      const rv = (Array.isArray(r.reveal) ? r.reveal : [r.reveal]).filter(Boolean).map(e => shortText(e, 220)).slice(0, 2);
+      rounds.push({events: ev.length ? ev : ['Conditions change this round.'], reveal: rv, scenario: v.scen});
+    }
+    if (obj.rounds.length < n) notes.push(`the model wrote ${obj.rounds.length} of ${n} rounds; the last one was repeated`);
+    return {title: shortText(obj.title, 80) || 'Generated campaign', story: shortText(obj.story || obj.narrative, 500), rounds, notes, source: `Scenario Agent · ${a.label} · ${a.model}`};
+  });
+}
+// Rule-based fallback: perturb 3–4 scenario inputs around their defaults (seeded, reproducible).
+function randomCase(t, seed) {
+  const r = rng(seed * 7919 + t.num * 104729), d = defaults(t);
+  const nums = t.params.filter(x => x.role === 'scenario' && !x.type);
+  const pick = nums.map(x => ({x, k: r()})).sort((a, b) => a.k - b.k).slice(0, Math.min(4, nums.length)).map(o => o.x);
+  const ch = {}; pick.forEach(x => { ch[x.id] = fitParam(t, x.id, d[x.id] * (0.65 + 0.75 * r())); });
+  if (t.id === 'scheduling') { const g = rng(seed * 31 + 7); const jobs = d.jobs.map(j => ({id: j.id, p: 2 + Math.floor(g() * 9)})); const P = sum(jobs.map(j => j.p)); jobs.forEach(j => { j.d = clamp(j.p + 1 + Math.floor(g() * P * 0.85), 1, 120); }); ch.jobs = jobs; }
+  const {scen} = validScenario(t, ch);
+  const diffs = changesText(t, {...state.inputs[t.id], ...paramDefaults(t)}, {...state.inputs[t.id], ...scen}).filter(c => c.role === 'scenario').map(c => c.text);
+  return {title: `Random case #${seed}`, story: 'Random variation of the standard scenario: ' + (diffs.join('; ') || 'no change') + '.', scenario: scen, notes: [], source: 'Rule-based generator (no LLM)'};
+}
+function applyCase(t, c) {
+  state.cases[t.id] = c;
+  Object.assign(state.inputs[t.id], JSON.parse(JSON.stringify(c.scenario)));
+  logActivity(t, `Case loaded: ${c.title} (${c.source})`);
+}
+function caseHTML(t) {
+  const c = state.cases[t.id], live = llmLive(), a = activeLLM(), m = SCEN.msg[t.id];
+  return `<div class="scen-agent"><div class="scen-head"><b>✦ Scenario Agent</b><span class="small muted">${live ? `uses ${esc(a.label)} · <span class="mono">${esc(a.model)}</span>` : 'no LLM connected: rule-based random cases only'}</span></div>
+    ${c ? `<div class="rec" style="margin:8px 0"><div class="name">${esc(c.title)}</div><p class="small" style="margin:4px 0">${esc(c.story)}</p><div class="small muted">${esc(c.source)}${c.notes && c.notes.length ? ` · adjusted: ${esc(c.notes.slice(0, 3).join('; '))}` : ''}</div></div>` : ''}
+    <div class="chat-in"><input type="text" id="scenTheme" placeholder="Optional brief, e.g. “monsoon floods hit a pharma plant in Vizag”" value="${esc(SCEN.theme[t.id] || '')}" style="flex:1;border:1px solid var(--line);background:var(--panel-2);color:var(--ink);border-radius:9px;padding:7px 9px;font:inherit;font-size:13px"></div>
+    <div class="actions" style="margin-top:8px"><button class="btn ${live ? 'primary' : ''}" id="scenGen" ${SCEN.busy || !live ? 'disabled' : ''} title="${live ? 'Ask the LLM to write a case' : 'Connect an LLM in Live LLM settings first'}">${SCEN.busy ? 'Writing case…' : '✦ Generate case with AI'}</button>
+      <button class="btn" id="scenRand" ${SCEN.busy ? 'disabled' : ''}>🎲 Random case</button>
+      ${c ? '<button class="btn ghost" id="scenClear">Restore standard scenario</button>' : ''}
+      ${!live ? '<button class="btn ghost" id="scenOllama" title="Use a free local model through Ollama">Use Ollama (free)</button>' : ''}</div>
+    ${m ? `<div class="msg ${m.err ? 'error' : 'tool'}" style="margin-top:6px">${esc(m.text)}</div>` : ''}
+    <p class="small muted" style="margin:6px 0 0">Generated cases change only scenario inputs (checked against each input's range). In a class room they count as practice.</p></div>`;
+}
+function bindCase(t) {
+  const th = $('#scenTheme'); if (!th) return;
+  th.addEventListener('input', () => { SCEN.theme[t.id] = th.value; });
+  const g = $('#scenGen'); if (g) g.onclick = async () => {
+    readInputs(t); SCEN.busy = true; SCEN.msg[t.id] = {text: 'The Scenario Agent is writing a case…'}; renderMain();
+    try { const c = await generateCase(t, (SCEN.theme[t.id] || '').trim()); applyCase(t, c); SCEN.msg[t.id] = null; }
+    catch (e) { SCEN.msg[t.id] = {err: true, text: e.message}; }
+    SCEN.busy = false; if (state.view === t.id) render();
+  };
+  $('#scenRand').onclick = () => { readInputs(t); SCEN.seed = (SCEN.seed || 0) + 1; applyCase(t, randomCase(t, SCEN.seed)); SCEN.msg[t.id] = null; render(); };
+  const cl = $('#scenClear'); if (cl) cl.onclick = () => { readInputs(t); state.cases[t.id] = null; const d = defaults(t); t.params.filter(x => x.role === 'scenario').forEach(x => { state.inputs[t.id][x.id] = d[x.id]; }); logActivity(t, 'Standard scenario restored'); render(); };
+  const ol = $('#scenOllama'); if (ol) ol.onclick = async () => { SCEN.msg[t.id] = {text: 'Connecting to Ollama…'}; renderMain(); SCEN.msg[t.id] = await useOllama(); render(); };
+}
+// One-click Ollama: picks the provider, finds installed models, chooses a good one.
+// Served from the class server, it goes through the server, so the professor's Ollama serves the class.
+async function useOllama() {
+  const viaServer = location.protocol.startsWith('http');
+  LLM.provider = 'ollama';
+  const c = LLM.cfg.ollama; c.base = 'http://localhost:11434/v1'; c.proxy = viaServer;
+  if (viaServer) LLM.proxyUrl = location.origin;
+  try {
+    const list = await loadModels(); c.liveModels = list;
+    if (!list.length) { saveLLM(); return {err: true, text: 'Ollama is running but has no models. Install one, e.g.: ollama pull llama3.1'}; }
+    const pref = [/llama3\.[13]|llama-?3/i, /qwen2?\.?5|qwen3/i, /mistral/i, /gemma/i, /phi/i];
+    c.model = (pref.map(re => list.find(m => re.test(m))).find(Boolean)) || list[0];
+    saveLLM(); logActivity(null, `Ollama connected (${c.model})`);
+    return {text: `Connected to Ollama${viaServer ? ' on the class server' : ''}: using ${c.model} (${list.length} model${list.length > 1 ? 's' : ''} installed). Change it in Live LLM settings.`};
+  } catch (e) {
+    saveLLM();
+    return {err: true, text: viaServer ? `Could not reach Ollama through the class server. On the server laptop, start Ollama (ollama serve) and pull a model (ollama pull llama3.1). (${e.message})`
+      : `Could not reach Ollama at localhost:11434. Install it from ollama.com, then run: OLLAMA_ORIGINS="*" ollama serve, and pull a model: ollama pull llama3.1. (${e.message})`};
+  }
+}
+
 /* ---------------- boot ---------------- */
 $('#resetAllBtn').onclick = () => { resetState(); state.errors = {}; logActivity(null, 'Session reset'); render(); };
 $('#themeBtn').onclick = () => {
@@ -2424,7 +2625,7 @@ $('#roomPill').onclick = () => { state.view = 'room'; render(); };
 renderRoomPill();
 render();
 // Exposed for automated testing
-window.OpsLab = {TOPICS, TOPIC, Agent, state, defaults, render, LLM, runTool, PROVIDERS, ROOM};
+window.OpsLab = {TOPICS, TOPIC, Agent, state, defaults, render, LLM, runTool, PROVIDERS, ROOM, SCEN};
 </script>
 </body>
 </html>

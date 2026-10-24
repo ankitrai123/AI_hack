@@ -65,6 +65,12 @@ Then tick *Use local proxy* in Live LLM settings. The proxy listens on localhost
 
 Keys stay in the browser (or go through your own local proxy) and are sent only to the chosen provider. They are saved only if you tick *Remember keys*.
 
+### Scenario Agent (one agent for every topic)
+Each topic has a **Scenario Agent** panel. Type an optional brief (e.g. *"monsoon floods hit a pharma plant in Vizag"*) and click **Generate case with AI**. The agent writes a case (title, short story, new scenario values) using whichever LLM is connected. Every value is checked against the input's valid range, unknown inputs are dropped, and decision inputs can never be changed. In **Campaign** setup, choose *Rounds: written by the Scenario Agent* to get a whole campaign (briefing and conditions per round) built around your theme. For the supply-chain topic the disruption stays hidden until the round is played. Without an LLM, **Random case** makes rule-based variations. Generated cases count as practice in a class room.
+
+### Ollama (free, local LLM)
+Click **Use Ollama (free)** in the Scenario Agent panel, or **🦙 Use Ollama** in Live LLM settings. OpsLab selects the Ollama provider, finds your installed models and picks a good chat model. Setup: install from ollama.com, run `ollama pull llama3.1`, then `OLLAMA_ORIGINS="*" ollama serve`. When students open OpsLab from the class server, Ollama requests go through the server, so **one Ollama on the professor's laptop serves the whole class**; `OLLAMA_ORIGINS` isn't needed then.
+
 ### Optional class room (professor dashboard, roll numbers)
 Run OpsLab as a class with one command on the professor's laptop (Node 18+, nothing to install):
 ```
